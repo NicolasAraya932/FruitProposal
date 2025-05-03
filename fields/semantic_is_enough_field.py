@@ -1,0 +1,176 @@
+from typing import Dict, Optional, Tuple, Literal
+import torch
+from torch import Tensor, nn
+from nerfstudio.cameras.rays import RaySamples
+from nerfstudio.data.scene_box import SceneBox
+from nerfstudio.field_components.activations import trunc_exp
+from nerfstudio.field_components.encodings import HashEncoding
+from nerfstudio.field_components.mlp import MLP, MLPWithHashEncoding
+from nerfstudio.field_components.spatial_distortions import SpatialDistortion
+from nerfstudio.field_components.field_heads import SemanticFieldHead, FieldHeadNames
+from nerfstudio.fields.base_field import Field
+
+
+class SemanticIEField(Field):
+    """Merged field for density and semantics using hash-based encoding.
+
+    Args:
+        aabb: Scene bounding box.
+        num_levels: Number of levels in the hash encoding.
+        base_res: Minimum resolution of the hash grid.
+        max_res: Maximum resolution of the hash grid.
+        log2_hashmap_size: Log2 size of the hash map.
+        features_per_level: Number of features per level in the hash grid.
+        num_layers: Number of layers in the MLP.
+        layer_width: Width of each MLP layer.
+        geo_feat_dim: Dimension of geometric features.
+        num_semantic_classes: Number of semantic classes.
+        spatial_distortion: Spatial distortion module.
+        average_init_density: Initial density scaling factor.
+        implementation: Backend implementation ("tcnn" or "torch").
+    """
+
+    def __init__(
+        self,
+        aabb: Tensor,
+        num_levels: int = 4,
+        base_res: int = 16,
+        max_res: int = 2048,
+        log2_hashmap_size: int = 19,
+        features_per_level: int = 2,
+        num_layers: int = 9,
+        layer_width: int = 128,
+        geo_feat_dim: int = 15,
+        num_semantic_classes: int = 2,
+        average_init_density: float = 1.0,
+        skip_connections: Optional[Tuple[int]] = (5,),
+        implementation: Literal["tcnn", "torch"] = "tcnn",
+    ) -> None:
+        super().__init__()
+        self.register_buffer("aabb", aabb)
+        self.average_init_density = average_init_density
+        self.geo_feat_dim = geo_feat_dim
+        self.num_semantic_classes = num_semantic_classes
+
+        # print("Inside the SemanticIEField constructor")
+        # print(f"Using {num_levels} levels, base res {base_res}, max res {max_res}, log2_hashmap_size {log2_hashmap_size}")
+
+        # Merge of encoding and mlp_base
+        """
+        args:
+            def __init__(
+            self,
+            num_levels: int = 16,
+            min_res: int = 16,
+            max_res: int = 1024,
+            log2_hashmap_size: int = 19,
+            features_per_level: int = 2,
+            hash_init_scale: float = 0.001,
+            interpolation: Optional[Literal["Nearest", "Linear", "Smoothstep"]] = None,
+            num_layers: int = 2,
+            layer_width: int = 64,
+            out_dim: Optional[int] = None,
+            skip_connections: Optional[Tuple[int]] = None,
+            activation: Optional[nn.Module] = nn.ReLU(),
+            out_activation: Optional[nn.Module] = None,
+            implementation: Literal["tcnn", "torch"] = "torch",
+
+        Adding disponible args from the encoding and mlp_base
+        """
+        self.mlp_base = MLPWithHashEncoding(
+            num_levels=num_levels,
+            min_res=base_res,
+            max_res=max_res,
+            log2_hashmap_size=log2_hashmap_size,
+            features_per_level=features_per_level,
+            num_layers=num_layers,
+            layer_width=layer_width,
+            out_dim=1 + geo_feat_dim,  # 1 for density, rest for geometric features
+            skip_connections=skip_connections, # skip to 5 layer as semantic is enough
+            activation=nn.ReLU(),
+            out_activation=None,
+            implementation=implementation,
+        )
+
+        # Semantic MLP for semantic logits
+        self.mlp_semantic = MLP(
+            in_dim=geo_feat_dim,
+            num_layers=1,
+            layer_width=128,
+            out_dim=num_semantic_classes,
+            activation=nn.ReLU(),
+            out_activation=None,
+        )
+
+        # Semantic field head
+        self.field_head_semantic = SemanticFieldHead(
+            in_dim=self.mlp_semantic.get_out_dim(), num_classes=num_semantic_classes
+        )
+
+
+        # # Print dtype of every tensor in the class
+        # for name, param in self.named_parameters():
+        #     print(f"{name} is {param.dtype}")
+
+    def get_density(self, ray_samples: RaySamples) -> Tuple[Tensor, Tensor]:
+        """Computes density and geometric features."""
+        
+        positions = SceneBox.get_normalized_positions(ray_samples.frustums.get_positions(), self.aabb)
+        selector = ((positions > 0.0) & (positions < 1.0)).all(dim=-1)
+        positions = positions * selector[..., None]
+
+        assert positions.numel() > 0, "positions is empty."
+
+        self._sample_locations = positions
+        positions_flat = positions.view(-1, 3)
+
+        # Compute density and geometric features
+        assert positions_flat.numel() > 0, "positions_flat is empty."
+        h = self.mlp_base(positions_flat).view(*ray_samples.frustums.shape, -1)
+        density_before_activation, base_mlp_out = torch.split(h, [1, self.geo_feat_dim], dim=-1)
+        self._density_before_activation = density_before_activation
+
+        base_mlp_out = base_mlp_out.to(torch.float32)
+
+        # Rectify density
+        density = self.average_init_density * trunc_exp(density_before_activation.to(positions))
+        density = density * selector[..., None]
+
+        # print(f"density is {density.dtype}")
+        # print(f"base_mlp_out is {base_mlp_out.dtype}")
+        # print(f"positions is {positions.dtype}")
+        # print(f"positions_flat is {positions_flat.dtype}")
+        # print(f"selector is {selector.dtype}")
+        # for element in dir(ray_samples):
+        #     attr = getattr(ray_samples, element, None)
+        #     if isinstance(attr, torch.Tensor):
+        #         print(f"ray_samples.{element} dtype: {attr.dtype}")
+
+        return density, base_mlp_out
+
+    def get_outputs(
+        self, ray_samples: RaySamples, density_embedding: Optional[Tensor] = None
+    ) -> Dict[FieldHeadNames, Tensor]:
+        """Get outputs for density and semantics."""
+
+        assert density_embedding is not None, "density_embedding is None :C"
+        outputs = {}
+
+        outputs_shape = ray_samples.frustums.directions.shape[:-1]
+
+        # Compute semantic logits
+        semantics_input = density_embedding.view(-1, self.geo_feat_dim).to(torch.float32)
+        semantic_logits = self.mlp_semantic(semantics_input).view(*outputs_shape, -1).to(semantics_input)
+
+        semantics = self.field_head_semantic(semantic_logits).to(semantics_input)
+
+        # print("SemanticLogits FROM FIELD", semantics)
+
+        # Update outputs with semantic logits (you can do outputs[index] = sematics, but following Nerfacto logic)
+        outputs.update({FieldHeadNames.SEMANTICS: semantics})
+
+        # # print dtype of each tensor in outputs
+        # for name, param in outputs.items():
+        #     print(f"{name} is {param.dtype}")
+    
+        return outputs
