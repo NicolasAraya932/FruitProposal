@@ -11,7 +11,7 @@ from nerfstudio.field_components.field_heads import SemanticFieldHead, FieldHead
 from nerfstudio.fields.base_field import Field
 
 
-class SemanticIEField(Field):
+class FruitProposalField(Field):
     """Merged field for density and semantics using hash-based encoding.
 
     Args:

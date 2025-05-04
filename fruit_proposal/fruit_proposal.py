@@ -32,7 +32,7 @@ from nerfstudio.cameras.camera_optimizers import CameraOptimizer, CameraOptimize
 
 from nerfstudio.field_components.field_heads import FieldHeadNames
 from nerfstudio.fields.density_fields import HashMLPDensityField
-from nerfstudio.fields.semantic_is_enough_field import SemanticIEField
+from fruit_proposal.fruit_proposal_field import FruitProposalField
 from nerfstudio.model_components.losses import distortion_loss, interlevel_loss
 from nerfstudio.model_components.ray_samplers import ProposalNetworkSampler, UniformSampler
 from nerfstudio.model_components.renderers import (
@@ -45,12 +45,11 @@ from nerfstudio.utils import colormaps
 
 from nerfstudio.utils.rich_utils import CONSOLE
 
-
 @dataclass
-class SemanticIEModelConfig(ModelConfig):
+class FruitProposalModelConfig(ModelConfig):
     """Nerfacto Model Config"""
 
-    _target: Type = field(default_factory=lambda: SemanticIEModel)
+    _target: Type = field(default_factory=lambda: FruitProposalModel)
     near_plane: float = 0.05
     """How far along the ray to start sampling."""
     far_plane: float = 1000.0
@@ -105,17 +104,17 @@ class SemanticIEModelConfig(ModelConfig):
     camera_optimizer: CameraOptimizerConfig = field(default_factory=lambda: CameraOptimizerConfig(mode="SO3xR3"))
     """Config of the camera optimizer to use"""
 
-class SemanticIEModel(Model):
+class FruitProposalModel(Model):
     """Semantic NeRF model for binary semantics and density."""
 
-    config: SemanticIEModelConfig
+    config: FruitProposalModelConfig
 
     def populate_modules(self):
         """Set the fields and modules."""
         super().populate_modules()
 
         # Initialize the field
-        self.field = SemanticIEField(
+        self.field = FruitProposalField(
             aabb = self.scene_box.aabb,
             num_levels = self.config.num_levels,
             base_res = self.config.base_res,
