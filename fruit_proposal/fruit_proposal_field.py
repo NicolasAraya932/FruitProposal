@@ -5,6 +5,7 @@ from nerfstudio.cameras.rays import RaySamples
 from nerfstudio.data.scene_box import SceneBox
 from nerfstudio.field_components.activations import trunc_exp
 from nerfstudio.field_components.encodings import HashEncoding
+from nerfstudio.field_components.encodings import NeRFEncoding, SHEncoding
 from nerfstudio.field_components.mlp import MLP, MLPWithHashEncoding
 from nerfstudio.field_components.spatial_distortions import SpatialDistortion
 from nerfstudio.field_components.field_heads import SemanticFieldHead, FieldHeadNames
@@ -43,6 +44,8 @@ class FruitProposalField(Field):
         geo_feat_dim: int = 15,
         num_semantic_classes: int = 2,
         average_init_density: float = 1.0,
+        num_layers_color: int = 3,  # COLOR
+        hidden_dim_color: int = 64, # COLOR
         skip_connections: Optional[Tuple[int]] = (5,),
         implementation: Literal["tcnn", "torch"] = "tcnn",
     ) -> None:
@@ -77,6 +80,14 @@ class FruitProposalField(Field):
 
         Adding disponible args from the encoding and mlp_base
         """
+
+        # Encoding for directions
+        self.direction_encoding = SHEncoding(
+            levels=4,
+            implementation=implementation,
+        )
+
+        # Density base mlp with hash encoding
         self.mlp_base = MLPWithHashEncoding(
             num_levels=num_levels,
             min_res=base_res,
@@ -89,6 +100,17 @@ class FruitProposalField(Field):
             skip_connections=skip_connections, # skip to 5 layer as semantic is enough
             activation=nn.ReLU(),
             out_activation=None,
+            implementation=implementation,
+        )
+
+        # Color MLP
+        self.mlp_head = MLP(
+            in_dim=self.direction_encoding.get_out_dim() + self.geo_feat_dim + self.appearance_embedding_dim,
+            num_layers=num_layers_color,
+            layer_width=hidden_dim_color,
+            out_dim=3,
+            activation=nn.ReLU(),
+            out_activation=nn.Sigmoid(),
             implementation=implementation,
         )
 
@@ -107,10 +129,6 @@ class FruitProposalField(Field):
             in_dim=self.mlp_semantic.get_out_dim(), num_classes=num_semantic_classes
         )
 
-
-        # # Print dtype of every tensor in the class
-        # for name, param in self.named_parameters():
-        #     print(f"{name} is {param.dtype}")
 
     def get_density(self, ray_samples: RaySamples) -> Tuple[Tensor, Tensor]:
         """Computes density and geometric features."""
@@ -136,16 +154,6 @@ class FruitProposalField(Field):
         density = self.average_init_density * trunc_exp(density_before_activation.to(positions))
         density = density * selector[..., None]
 
-        # print(f"density is {density.dtype}")
-        # print(f"base_mlp_out is {base_mlp_out.dtype}")
-        # print(f"positions is {positions.dtype}")
-        # print(f"positions_flat is {positions_flat.dtype}")
-        # print(f"selector is {selector.dtype}")
-        # for element in dir(ray_samples):
-        #     attr = getattr(ray_samples, element, None)
-        #     if isinstance(attr, torch.Tensor):
-        #         print(f"ray_samples.{element} dtype: {attr.dtype}")
-
         return density, base_mlp_out
 
     def get_outputs(
@@ -164,13 +172,7 @@ class FruitProposalField(Field):
 
         semantics = self.field_head_semantic(semantic_logits).to(semantics_input)
 
-        # print("SemanticLogits FROM FIELD", semantics)
-
         # Update outputs with semantic logits (you can do outputs[index] = sematics, but following Nerfacto logic)
         outputs.update({FieldHeadNames.SEMANTICS: semantics})
 
-        # # print dtype of each tensor in outputs
-        # for name, param in outputs.items():
-        #     print(f"{name} is {param.dtype}")
-    
         return outputs
