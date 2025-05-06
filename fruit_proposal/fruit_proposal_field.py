@@ -3,13 +3,14 @@ import torch
 from torch import Tensor, nn
 from nerfstudio.cameras.rays import RaySamples
 from nerfstudio.data.scene_box import SceneBox
+from nerfstudio.field_components.embedding import Embedding
 from nerfstudio.field_components.activations import trunc_exp
 from nerfstudio.field_components.encodings import HashEncoding
 from nerfstudio.field_components.encodings import NeRFEncoding, SHEncoding
 from nerfstudio.field_components.mlp import MLP, MLPWithHashEncoding
 from nerfstudio.field_components.spatial_distortions import SpatialDistortion
 from nerfstudio.field_components.field_heads import SemanticFieldHead, FieldHeadNames
-from nerfstudio.fields.base_field import Field
+from nerfstudio.fields.base_field import Field, get_normalized_directions
 
 
 class FruitProposalField(Field):
@@ -34,6 +35,7 @@ class FruitProposalField(Field):
     def __init__(
         self,
         aabb: Tensor,
+        num_images: int,
         num_levels: int = 4,
         base_res: int = 16,
         max_res: int = 2048,
@@ -47,13 +49,24 @@ class FruitProposalField(Field):
         num_layers_color: int = 3,  # COLOR
         hidden_dim_color: int = 64, # COLOR
         skip_connections: Optional[Tuple[int]] = (5,),
+        appearance_embedding_dim: int = 32,
         implementation: Literal["tcnn", "torch"] = "tcnn",
     ) -> None:
         super().__init__()
         self.register_buffer("aabb", aabb)
+        self.register_buffer("max_res", torch.tensor(max_res))
+        self.register_buffer("num_levels", torch.tensor(num_levels))
+        self.register_buffer("log2_hashmap_size", torch.tensor(log2_hashmap_size))
+        self.num_images = num_images
         self.average_init_density = average_init_density
         self.geo_feat_dim = geo_feat_dim
         self.num_semantic_classes = num_semantic_classes
+        self.appearance_embedding_dim = appearance_embedding_dim
+
+        if self.appearance_embedding_dim > 0:
+            self.embedding_appearance = Embedding(self.num_images, self.appearance_embedding_dim)
+        else:
+            self.embedding_appearance = None
 
         # print("Inside the SemanticIEField constructor")
         # print(f"Using {num_levels} levels, base res {base_res}, max res {max_res}, log2_hashmap_size {log2_hashmap_size}")
@@ -104,7 +117,7 @@ class FruitProposalField(Field):
         )
 
         # Color MLP
-        self.mlp_head = MLP(
+        self.mlp_color = MLP(
             in_dim=self.direction_encoding.get_out_dim() + self.geo_feat_dim + self.appearance_embedding_dim,
             num_layers=num_layers_color,
             layer_width=hidden_dim_color,
@@ -160,19 +173,48 @@ class FruitProposalField(Field):
         self, ray_samples: RaySamples, density_embedding: Optional[Tensor] = None
     ) -> Dict[FieldHeadNames, Tensor]:
         """Get outputs for density and semantics."""
-
         assert density_embedding is not None, "density_embedding is None :C"
+
         outputs = {}
 
+        # Directions for Color MLP training
+        if ray_samples.camera_indices is None:
+            raise AttributeError("Camera indices are not provided.")
+        camera_indices = ray_samples.camera_indices.squeeze()
+        directions = get_normalized_directions(ray_samples.frustums.directions)
+        directions_flat = directions.view(-1, 3)
+        d = self.direction_encoding(directions_flat)
+
         outputs_shape = ray_samples.frustums.directions.shape[:-1]
+
+        # appearance
+        embedded_appearance = None
+        if self.embedding_appearance is not None:
+            if self.training:
+                embedded_appearance = self.embedding_appearance(camera_indices)
+            else:
+                embedded_appearance = torch.zeros(
+                    (*directions.shape[:-1], self.appearance_embedding_dim), device=directions.device
+                )
 
         # Compute semantic logits
         semantics_input = density_embedding.view(-1, self.geo_feat_dim).to(torch.float32)
         semantic_logits = self.mlp_semantic(semantics_input).view(*outputs_shape, -1).to(semantics_input)
-
         semantics = self.field_head_semantic(semantic_logits).to(semantics_input)
-
-        # Update outputs with semantic logits (you can do outputs[index] = sematics, but following Nerfacto logic)
         outputs.update({FieldHeadNames.SEMANTICS: semantics})
+
+        # Compute 
+        h = torch.cat(
+            [
+                d,
+                density_embedding.view(-1, self.geo_feat_dim),
+            ]
+            + (
+                [embedded_appearance.view(-1, self.appearance_embedding_dim)] if embedded_appearance is not None else []
+            ),
+            dim=-1,
+        )
+        rgb = self.mlp_color(h).view(*outputs_shape, -1).to(directions)
+        outputs.update({FieldHeadNames.RGB : rgb})
 
         return outputs
