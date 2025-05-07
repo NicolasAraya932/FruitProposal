@@ -58,8 +58,6 @@ class NerfstudioDataParserConfig(DataParserConfig):
     """The percentage of the dataset to use for training. Only used when eval_mode is train-split-fraction."""
     eval_interval: int = 8
     """The interval between frames to use for eval. Only used when eval_mode is eval-interval."""
-    depth_unit_scale_factor: float = 1e-3
-    """Scales the depth values to meters. Default value is 0.001 for a millimeter to meter conversion."""
     mask_color: Optional[Tuple[float, float, float]] = None
     """Replace the unknown pixels with this color. Relevant if you have a mask but still sample everywhere."""
     load_3D_points: bool = False
@@ -84,8 +82,7 @@ class Nerfstudio(DataParser):
             data_dir = self.config.data
 
         image_filenames = []
-        mask_filenames = []
-        depth_filenames = []
+        binary_mask_filenames = []
         poses = []
 
         fx_fixed = "fl_x" in meta
@@ -155,27 +152,19 @@ class Nerfstudio(DataParser):
 
             image_filenames.append(fname)
             poses.append(np.array(frame["transform_matrix"]))
-            if "mask_path" in frame:
-                mask_filepath = Path(frame["mask_path"])
-                mask_fname = self._get_fname(
-                    mask_filepath,
+            if "binary_mask_path" in frame:
+                binary_mask_filepath = Path(frame["binary_mask_path"])
+                binary_mask_fname = self._get_fname(
+                    binary_mask_filepath,
                     data_dir,
-                    downsample_folder_prefix="masks_",
+                    downsample_folder_prefix="binary_masks_",
                 )
-                mask_filenames.append(mask_fname)
+                binary_mask_filenames.append(binary_mask_fname)
 
-            if "depth_file_path" in frame:
-                depth_filepath = Path(frame["depth_file_path"])
-                depth_fname = self._get_fname(depth_filepath, data_dir, downsample_folder_prefix="depths_")
-                depth_filenames.append(depth_fname)
 
-        assert len(mask_filenames) == 0 or (len(mask_filenames) == len(image_filenames)), """
+        assert len(binary_mask_filenames) == 0 or (len(binary_mask_filenames) == len(image_filenames)), """
         Different number of image and mask filenames.
         You should check that mask_path is specified for every frame (or zero frames) in transforms.json.
-        """
-        assert len(depth_filenames) == 0 or (len(depth_filenames) == len(image_filenames)), """
-        Different number of image and depth filenames.
-        You should check that depth_file_path is specified for every frame (or zero frames) in transforms.json.
         """
 
         has_split_files_spec = any(f"{split}_filenames" in meta for split in ("train", "val", "test"))
@@ -237,8 +226,7 @@ class Nerfstudio(DataParser):
 
         # Choose image_filenames and poses based on split, but after auto orient and scaling the poses.
         image_filenames = [image_filenames[i] for i in indices]
-        mask_filenames = [mask_filenames[i] for i in indices] if len(mask_filenames) > 0 else []
-        depth_filenames = [depth_filenames[i] for i in indices] if len(depth_filenames) > 0 else []
+        binary_mask_filenames = [binary_mask_filenames[i] for i in indices] if len(binary_mask_filenames) > 0 else []
 
         idx_tensor = torch.tensor(indices, dtype=torch.long)
         poses = poses[idx_tensor]
@@ -394,12 +382,10 @@ class Nerfstudio(DataParser):
             image_filenames=image_filenames,
             cameras=cameras,
             scene_box=scene_box,
-            mask_filenames=mask_filenames if len(mask_filenames) > 0 else None,
+            mask_filenames=binary_mask_filenames if len(binary_mask_filenames) > 0 else None,
             dataparser_scale=scale_factor,
             dataparser_transform=dataparser_transform_matrix,
             metadata={
-                "depth_filenames": depth_filenames if len(depth_filenames) > 0 else None,
-                "depth_unit_scale_factor": self.config.depth_unit_scale_factor,
                 "mask_color": self.config.mask_color,
                 **metadata,
             },
