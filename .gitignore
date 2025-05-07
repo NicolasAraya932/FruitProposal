@@ -1,2 +1,2 @@
-/fruit_proposal.egg-info
-/fruit_proposal/__pycache__
+*.egg-info
+*/__pycache__
