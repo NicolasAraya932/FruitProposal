@@ -27,18 +27,26 @@ import torch
 from torch.nn import Parameter
 from torch.nn import CrossEntropyLoss
 
-from nerfstudio.cameras.rays import RayBundle
+from nerfstudio.cameras.rays import RayBundle, RaySamples
 from nerfstudio.cameras.camera_optimizers import CameraOptimizer, CameraOptimizerConfig
 
 from nerfstudio.field_components.field_heads import FieldHeadNames
 from nerfstudio.fields.density_fields import HashMLPDensityField
 from fruit_proposal.fruit_proposal_field import FruitProposalField
-from nerfstudio.model_components.losses import distortion_loss, interlevel_loss
+from nerfstudio.model_components.losses import (
+    distortion_loss,
+    interlevel_loss,
+    MSELoss,
+)
 from nerfstudio.model_components.ray_samplers import ProposalNetworkSampler, UniformSampler
 from nerfstudio.model_components.renderers import (
+    AccumulationRenderer,
+    DepthRenderer,
+    NormalsRenderer,
+    RGBRenderer,
     SemanticRenderer,
-    DepthRenderer
 )
+from nerfstudio.model_components.shaders import NormalsShader
 from nerfstudio.model_components.scene_colliders import NearFarCollider
 from nerfstudio.models.base_model import Model, ModelConfig
 from nerfstudio.utils import colormaps
@@ -183,12 +191,29 @@ class FruitProposalModel(Model):
         ) 
         
         # Renderers
-        self.renderer_semantics   = SemanticRenderer()
-        self.renderer_depth       = DepthRenderer()
+        self.renderer_semantics      = SemanticRenderer()
+        self.renderer_depth          = DepthRenderer()
+        self.renderer_rgb            = RGBRenderer(background_color=self.config.background_color)
+        self.renderer_accumulation   = AccumulationRenderer()
+        self.renderer_expected_depth = DepthRenderer(method="expected")
+        self.renderer_normals        = NormalsRenderer()
+
+        # shaders
+        self.normals_shader = NormalsShader()
 
         # Losses
+        self.rgb_loss = MSELoss()
         self.semantic_loss = CrossEntropyLoss() # Default reduction="mean")
         self.interlevel_loss = interlevel_loss
+        # metrics
+        from torchmetrics.functional import structural_similarity_index_measure
+        from torchmetrics.image import PeakSignalNoiseRatio
+        from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
+
+        self.psnr = PeakSignalNoiseRatio(data_range=1.0)
+        self.ssim = structural_similarity_index_measure
+        self.lpips = LearnedPerceptualImagePatchSimilarity(normalize=True)
+        self.step = 0
 
         import matplotlib.pyplot as plt
         
@@ -196,18 +221,14 @@ class FruitProposalModel(Model):
         cmap = plt.get_cmap("viridis", self.config.num_semantic_classes)
         self.colormap = torch.tensor(cmap.colors, dtype=torch.float32)
 
-        # # Print dtype of every tensor in the class
-        # for name, param in self.named_parameters():
-        #     CONSOLE.print(f"{name} is {param.dtype}")
 
     def get_outputs(self, ray_bundle: RayBundle):
         """Compute outputs for semantics only."""
         
         outputs = {}
         # Sample points along rays using the proposal sampler
-        ray_samples, weights_list, ray_samples_list = self.proposal_sampler(
-            ray_bundle, density_fns=self.density_fns
-        )
+        ray_samples: RaySamples
+        ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
     
         # Compute field outputs
         field_outputs = self.field(ray_samples)
@@ -215,33 +236,24 @@ class FruitProposalModel(Model):
         # Compute density weights
         weights_static = ray_samples.get_weights(field_outputs[FieldHeadNames.DENSITY])
         weights_list.append(weights_static)
-        # Renderers
+        outputs.update({"weights_list": weights_list})
         
         # Render depth
         depth = self.renderer_depth(weights=weights_static, ray_samples=ray_samples)
+        outputs.update({"depth": depth})
 
         # Render semantics
         semantic_weights = weights_static
         semantics = self.renderer_semantics(
             field_outputs[FieldHeadNames.SEMANTICS], weights=semantic_weights
         )
-
+        outputs.update({"semantics": semantics})
         # Apply colormap for visualization
         semantic_labels = torch.argmax(torch.nn.functional.softmax(semantics, dim=-1), dim=-1)
-
+        outputs.update({"semantic_labels": semantic_labels})
         #print(semantic_labels.shape, semantic_labels[:10], semantics[:10])
         semantics_colormap = self.colormap.to(self.device)[semantic_labels]
-    
-        # Return only semantics-related outputs
-        outputs = {
-            "semantics": semantics,
-            "semantic_labels": semantic_labels,
-            "semantics_colormap": semantics_colormap,
-            "depth": depth,
-            "weights_list": weights_list
-        }
-
-        # print(semantics)
+        outputs.update({"semantics_colormap": semantics_colormap})
 
         return outputs
 
