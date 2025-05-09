@@ -327,12 +327,19 @@ class FruitProposalModel(Model):
         ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
 
         """
-        FOR RGB
+        Compute fields outputs
         """
-        # Compute field outputs
         nerfacto_field_outputs = self.nerfacto_field.forward(ray_samples, compute_normals=self.config.predict_normals)
+        fruit_proposal_field_outputs = self.fruit_proposal_field.forward(ray_samples, compute_normals=self.config.predict_normals)
         if self.config.use_gradient_scaling:
-            nerfacto_field_outputs = scale_gradients_by_distance_squared(nerfacto_field_outputs, ray_samples)
+            nerfacto_field_outputs       = scale_gradients_by_distance_squared(nerfacto_field_outputs, ray_samples)
+            fruit_proposal_field_outputs = scale_gradients_by_distance_squared(fruit_proposal_field_outputs, ray_samples)
+
+        """
+        Obtaining the density weights
+        """
+        nerfacto_weights              = ray_samples.get_weights(nerfacto_field_outputs[FieldHeadNames.DENSITY])
+        fruit_proposal_weights_static = ray_samples.get_weights(fruit_proposal_field_outputs[FieldHeadNames.DENSITY])
 
         # Compute RGB
         nerfacto_weights = ray_samples.get_weights(nerfacto_field_outputs[FieldHeadNames.DENSITY])
@@ -351,8 +358,6 @@ class FruitProposalModel(Model):
         outputs.update({"expected_depth": nerfacto_expected_depth})
         outputs.update({"accumulation": nerfacto_accumulation})
 
-
-    
         """
         FOR SEMANTICS
         """
