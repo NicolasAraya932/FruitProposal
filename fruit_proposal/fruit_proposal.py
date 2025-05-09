@@ -358,9 +358,11 @@ class FruitProposalModel(Model):
             fruit_proposal_field_outputs[FieldHeadNames.SEMANTICS], weights=fruit_proposal_weights_static
         )
         semantic_labels = torch.argmax(torch.nn.functional.softmax(semantics, dim=-1), dim=-1)
+        semantics_colormap = self.colormap.to(self.device)[semantic_labels]
         outputs.update({"rgb": nerfacto_rgb})
         outputs.update({"semantics": semantics})
         outputs.update({"semantic_labels": semantic_labels})
+        outputs.update({"semantics_colormap": semantics_colormap})
 
         """
         NERFACTO FIELD HEADS
@@ -370,6 +372,7 @@ class FruitProposalModel(Model):
             pred_normals = self.renderer_normals(nerfacto_field_outputs[FieldHeadNames.PRED_NORMALS], weights=weights)
             outputs["normals"] = self.normals_shader(normals)
             outputs["pred_normals"] = self.normals_shader(pred_normals)
+
         # These use a lot of GPU memory, so we avoid storing them for eval.
         if self.training:
             outputs["weights_list"] = weights_list
@@ -379,7 +382,6 @@ class FruitProposalModel(Model):
             outputs["rendered_orientation_loss"] = orientation_loss(
                 weights.detach(), nerfacto_field_outputs[FieldHeadNames.NORMALS], ray_bundle.directions
             )
-
             outputs["rendered_pred_normal_loss"] = pred_normal_loss(
                 weights.detach(),
                 nerfacto_field_outputs[FieldHeadNames.NORMALS].detach(),
@@ -388,15 +390,6 @@ class FruitProposalModel(Model):
 
         for i in range(self.config.num_proposal_iterations):
             outputs[f"prop_depth_{i}"] = self.renderer_depth(weights=weights_list[i], ray_samples=ray_samples_list[i])
-
-        
-
-
-        # Apply colormap for visualization
-        semantic_labels = torch.argmax(torch.nn.functional.softmax(semantics, dim=-1), dim=-1)
-        outputs.update({"semantic_labels": semantic_labels})
-        semantics_colormap = self.colormap.to(self.device)[semantic_labels]
-        outputs.update({"semantics_colormap": semantics_colormap})
 
         return outputs
 
