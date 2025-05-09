@@ -248,49 +248,24 @@ class FruitProposalModel(Model):
 
     def get_loss_dict(self, outputs, batch, metrics_dict=None):
 
-        # Ground truth labels binary png mask as tensor [channel_image, alpha]
-        """
-        def get_image_float32(self, image_idx: int) -> Float[Tensor, "image_height image_width num_channels"]:
-            Returns a 3 channel image in float32 torch.Tensor.
-
-            Args:
-                image_idx: The image index in the dataset.
-            image = torch.from_numpy(self.get_numpy_image(image_idx).astype("float32") / 255.0)
-            if self._dataparser_outputs.alpha_color is not None and image.shape[-1] == 4:
-                assert (self._dataparser_outputs.alpha_color >= 0).all() and (
-                    self._dataparser_outputs.alpha_color <= 1
-                ).all(), "alpha color given is out of range between [0, 1]."
-                image = image[:, :, :3] * image[:, :, -1:] + self._dataparser_outputs.alpha_color * (1.0 - image[:, :, -1:])
-            print(image)
-            return image
-        """
         loss_dict = {}
 
         # Predictions
         pred_logits = outputs["semantics"]  # [N_rays, num_classes]
         pred_logits = torch.clamp(pred_logits, min=-3.8, max=7)
-        N_rays = pred_logits.shape[0]
-        # print(f"Predicted logits min: {pred_logits.min()}, max: {pred_logits.max()}")
-
-        rgb_values = batch["image"][:,:3].to(self.device)
-        summed_rgb = rgb_values.sum(dim=-1)
 
         # Convert summed_rgb to binary: 1 if non-zero, 0 otherwise
+        binary_values = batch["binary_mask"][:,:3].to(self.device)
+        summed_rgb = binary_values.sum(dim=-1)
         binary_mask = (summed_rgb != 0).long()
 
-        # print(binary_mask.shape, binary_mask[:10], summed_rgb[:10])
-        # print(binary_mask.min(), binary_mask.max())
-        
         assert torch.all((binary_mask == 0) | (binary_mask == 1)), "Ground truth cannot be interpreted as binary mask"
-
         gt_sem = binary_mask
 
         # Get ray_indices (if available)
+        N_rays = pred_logits.shape[0]
         ray_indices = batch.get("ray_indices", torch.arange(N_rays, device=self.device))
-
-        gt_labels = gt_sem[ray_indices]  # [N_rays] SUSPECT
-
-        # print(gt_labels.shape, gt_labels[:10], gt_labels.min(), gt_labels.max())
+        gt_labels = gt_sem[ray_indices]  # [N_rays]
 
         # Cross entropy loss
         loss_dict["semantic_loss"] = self.semantic_loss(pred_logits, gt_labels)
