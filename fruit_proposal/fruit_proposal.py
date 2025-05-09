@@ -37,8 +37,11 @@ from nerfstudio.engine.callbacks import (
 )
 
 from nerfstudio.field_components.field_heads import FieldHeadNames
+from nerfstudio.field_components.spatial_distortions import SceneContraction
 from nerfstudio.fields.density_fields import HashMLPDensityField
+from nerfstudio.fields.nerfacto_field import NerfactoField
 from fruit_proposal.fruit_proposal_field import FruitProposalField
+
 from nerfstudio.model_components.losses import (
     distortion_loss,
     interlevel_loss,
@@ -127,7 +130,14 @@ class FruitProposalModel(Model):
         """Set the fields and modules."""
         super().populate_modules()
 
-        # Initialize the field
+        if self.config.disable_scene_contraction:
+            scene_contraction = None
+        else:
+            scene_contraction = SceneContraction(order=float("inf"))
+
+        appearance_embedding_dim = self.config.appearance_embed_dim if self.config.use_appearance_embedding else 0
+
+        # Fields
         self.fruit_proposal_field = FruitProposalField(
             aabb = self.scene_box.aabb,
             num_levels = self.config.num_levels,
@@ -137,6 +147,24 @@ class FruitProposalModel(Model):
             features_per_level = self.config.features_per_level,
             average_init_density = self.config.average_init_density,
             implementation = self.config.implementation
+        )
+        self.nerfacto_field = NerfactoField(
+            self.scene_box.aabb,
+            hidden_dim=self.config.hidden_dim,
+            num_levels=self.config.num_levels,
+            max_res=self.config.max_res,
+            base_res=self.config.base_res,
+            features_per_level=self.config.features_per_level,
+            log2_hashmap_size=self.config.log2_hashmap_size,
+            hidden_dim_color=self.config.hidden_dim_color,
+            hidden_dim_transient=self.config.hidden_dim_transient,
+            spatial_distortion=scene_contraction,
+            num_images=self.num_train_data,
+            use_pred_normals=self.config.predict_normals,
+            use_average_appearance_embedding=self.config.use_average_appearance_embedding,
+            appearance_embedding_dim=appearance_embedding_dim,
+            average_init_density=self.config.average_init_density,
+            implementation=self.config.implementation,
         )
 
         self.camera_optimizer: CameraOptimizer = self.config.camera_optimizer.setup(
