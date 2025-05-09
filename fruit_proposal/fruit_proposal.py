@@ -30,6 +30,12 @@ from torch.nn import CrossEntropyLoss
 from nerfstudio.cameras.rays import RayBundle, RaySamples
 from nerfstudio.cameras.camera_optimizers import CameraOptimizer, CameraOptimizerConfig
 
+from nerfstudio.engine.callbacks import (
+    TrainingCallback,
+    TrainingCallbackAttributes,
+    TrainingCallbackLocation,
+)
+
 from nerfstudio.field_components.field_heads import FieldHeadNames
 from nerfstudio.fields.density_fields import HashMLPDensityField
 from fruit_proposal.fruit_proposal_field import FruitProposalField
@@ -205,6 +211,7 @@ class FruitProposalModel(Model):
         self.rgb_loss = MSELoss()
         self.semantic_loss = CrossEntropyLoss() # Default reduction="mean")
         self.interlevel_loss = interlevel_loss
+
         # metrics
         from torchmetrics.functional import structural_similarity_index_measure
         from torchmetrics.image import PeakSignalNoiseRatio
@@ -221,6 +228,48 @@ class FruitProposalModel(Model):
         cmap = plt.get_cmap("viridis", self.config.num_semantic_classes)
         self.colormap = torch.tensor(cmap.colors, dtype=torch.float32)
 
+    def get_param_groups(self) -> Dict[str, List[Parameter]]:
+        param_groups = {}
+        param_groups["proposal_networks"] = list(self.proposal_networks.parameters())
+        param_groups["fields"] = list(self.field.parameters())
+        self.camera_optimizer.get_param_groups(param_groups=param_groups)
+        return param_groups
+
+    def get_training_callbacks(
+        self, training_callback_attributes: TrainingCallbackAttributes
+    ) -> List[TrainingCallback]:
+        callbacks = []
+        if self.config.use_proposal_weight_anneal:
+            # anneal the weights of the proposal network before doing PDF sampling
+            N = self.config.proposal_weights_anneal_max_num_iters
+
+            def set_anneal(step):
+                # https://arxiv.org/pdf/2111.12077.pdf eq. 18
+                self.step = step
+                train_frac = np.clip(step / N, 0, 1)
+                self.step = step
+
+                def bias(x, b):
+                    return b * x / ((b - 1) * x + 1)
+
+                anneal = bias(train_frac, self.config.proposal_weights_anneal_slope)
+                self.proposal_sampler.set_anneal(anneal)
+
+            callbacks.append(
+                TrainingCallback(
+                    where_to_run=[TrainingCallbackLocation.BEFORE_TRAIN_ITERATION],
+                    update_every_num_iters=1,
+                    func=set_anneal,
+                )
+            )
+            callbacks.append(
+                TrainingCallback(
+                    where_to_run=[TrainingCallbackLocation.AFTER_TRAIN_ITERATION],
+                    update_every_num_iters=1,
+                    func=self.proposal_sampler.step_cb,
+                )
+            )
+        return callbacks
 
     def get_outputs(self, ray_bundle: RayBundle):
         """Compute outputs for semantics only."""
