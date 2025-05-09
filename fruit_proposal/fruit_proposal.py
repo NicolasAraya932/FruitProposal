@@ -316,7 +316,9 @@ class FruitProposalModel(Model):
         if self.training:
             self.camera_optimizer.apply_to_raybundle(ray_bundle)
 
-        # Sample points along rays using the proposal sampler
+        """
+        Sample points along rays using the proposal sampler.
+        """
         ray_samples: RaySamples
         ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
 
@@ -325,25 +327,26 @@ class FruitProposalModel(Model):
         """
         nerfacto_field_outputs = self.nerfacto_field.forward(ray_samples, compute_normals=self.config.predict_normals)
         if self.config.use_gradient_scaling:
-            field_outputs = scale_gradients_by_distance_squared(field_outputs, ray_samples)
+            nerfacto_field_field_outputs = scale_gradients_by_distance_squared(nerfacto_field_outputs, ray_samples)
     
         """
         FOR SEMANTICS
         """
         # Compute field outputs
         fruit_proposal_field_outputs = self.fruit_proposal_field(ray_samples)
+        if self.config.use_gradient_scaling:
+            fruit_proposal_field_outputs = scale_gradients_by_distance_squared(fruit_proposal_field_outputs, ray_samples)
     
         # Compute density weights
-        weights_static = ray_samples.get_weights(fruit_proposal_field_outputs[FieldHeadNames.DENSITY])
-        weights_list.append(weights_static)
-        outputs.update({"weights_list": weights_list})
+        fruit_proposal_weights_static = ray_samples.get_weights(fruit_proposal_field_outputs[FieldHeadNames.DENSITY])
+        weights_list.append(fruit_proposal_weights_static)
         
         # Render depth
-        depth = self.renderer_depth(weights=weights_static, ray_samples=ray_samples)
+        depth = self.renderer_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
         outputs.update({"depth": depth})
 
         # Render semantics
-        semantic_weights = weights_static
+        semantic_weights = fruit_proposal_weights_static
         semantics = self.renderer_semantics(
             fruit_proposal_field_outputs[FieldHeadNames.SEMANTICS], weights=semantic_weights
         )
