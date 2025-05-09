@@ -332,15 +332,16 @@ class FruitProposalModel(Model):
         """
         FOR SEMANTICS
         """
+
         # Compute field outputs
         fruit_proposal_field_outputs = self.fruit_proposal_field(ray_samples)
         if self.config.use_gradient_scaling:
             fruit_proposal_field_outputs = scale_gradients_by_distance_squared(fruit_proposal_field_outputs, ray_samples)
-    
+
         # Compute density weights
         fruit_proposal_weights_static = ray_samples.get_weights(fruit_proposal_field_outputs[FieldHeadNames.DENSITY])
         weights_list.append(fruit_proposal_weights_static)
-        
+
         # Render depth
         depth = self.renderer_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
         outputs.update({"depth": depth})
@@ -351,10 +352,10 @@ class FruitProposalModel(Model):
             fruit_proposal_field_outputs[FieldHeadNames.SEMANTICS], weights=semantic_weights
         )
         outputs.update({"semantics": semantics})
+
         # Apply colormap for visualization
         semantic_labels = torch.argmax(torch.nn.functional.softmax(semantics, dim=-1), dim=-1)
         outputs.update({"semantic_labels": semantic_labels})
-        #print(semantic_labels.shape, semantic_labels[:10], semantics[:10])
         semantics_colormap = self.colormap.to(self.device)[semantic_labels]
         outputs.update({"semantics_colormap": semantics_colormap})
 
@@ -362,8 +363,16 @@ class FruitProposalModel(Model):
 
 
     def get_loss_dict(self, outputs, batch, metrics_dict=None):
+        """
+        Compute the loss for the model.
+        """
 
         loss_dict = {}
+
+        
+        """
+        FOR SEMANTICS
+        """
 
         # Predictions
         pred_logits = outputs["semantics"]  # [N_rays, num_classes]
