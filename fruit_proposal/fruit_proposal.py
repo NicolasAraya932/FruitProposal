@@ -128,7 +128,7 @@ class FruitProposalModel(Model):
         super().populate_modules()
 
         # Initialize the field
-        self.field = FruitProposalField(
+        self.fruit_proposal_field = FruitProposalField(
             aabb = self.scene_box.aabb,
             num_levels = self.config.num_levels,
             base_res = self.config.base_res,
@@ -279,8 +279,11 @@ class FruitProposalModel(Model):
         ray_samples: RaySamples
         ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
     
+        """
+        FOR SEMANTICS
+        """
         # Compute field outputs
-        field_outputs = self.field(ray_samples)
+        field_outputs = self.fruit_proposal_field(ray_samples)
     
         # Compute density weights
         weights_static = ray_samples.get_weights(field_outputs[FieldHeadNames.DENSITY])
