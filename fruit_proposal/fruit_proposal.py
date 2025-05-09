@@ -138,6 +138,7 @@ class FruitProposalModel(Model):
         appearance_embedding_dim = self.config.appearance_embed_dim if self.config.use_appearance_embedding else 0
 
         # Fields
+        """SEMANTIC PROPOSAL FIELD"""
         self.fruit_proposal_field = FruitProposalField(
             aabb = self.scene_box.aabb,
             num_levels = self.config.num_levels,
@@ -148,6 +149,8 @@ class FruitProposalModel(Model):
             average_init_density = self.config.average_init_density,
             implementation = self.config.implementation
         )
+
+        """NERFACTO FIELD"""
         self.nerfacto_field = NerfactoField(
             self.scene_box.aabb,
             hidden_dim=self.config.hidden_dim,
@@ -179,6 +182,7 @@ class FruitProposalModel(Model):
             prop_net_args = self.config.proposal_net_args_list[0]
             network = HashMLPDensityField(
                 self.scene_box.aabb,
+                spatial_distortion=scene_contraction,
                 **prop_net_args,
                 average_init_density=self.config.average_init_density,
                 implementation=self.config.implementation,
@@ -190,6 +194,7 @@ class FruitProposalModel(Model):
                 prop_net_args = self.config.proposal_net_args_list[min(i, len(self.config.proposal_net_args_list) - 1)]
                 network = HashMLPDensityField(
                     self.scene_box.aabb,
+                    spatial_distortion=scene_contraction,
                     **prop_net_args,
                     average_init_density=self.config.average_init_density,
                     implementation=self.config.implementation,
@@ -218,6 +223,7 @@ class FruitProposalModel(Model):
             update_sched=update_schedule,
             initial_sampler=initial_sampler,
         )
+
         # Collider
         self.collider = NearFarCollider(
             near_plane=self.config.near_plane,
