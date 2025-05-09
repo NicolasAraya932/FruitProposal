@@ -338,8 +338,20 @@ class FruitProposalModel(Model):
         """
         Obtaining the density weights
         """
-        nerfacto_weights              = ray_samples.get_weights(nerfacto_field_outputs[FieldHeadNames.DENSITY])
+        nerfacto_weights_static       = ray_samples.get_weights(nerfacto_field_outputs[FieldHeadNames.DENSITY])
         fruit_proposal_weights_static = ray_samples.get_weights(fruit_proposal_field_outputs[FieldHeadNames.DENSITY])
+
+        weights = nerfacto_weights_static + fruit_proposal_weights_static
+        weights = weights / (torch.sum(weights, dim=-2, keepdim=True) + 1e-10)
+        with torch.no_grad():
+            depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
+        expected_depth = self.renderer_expected_depth(weights=weights, ray_samples=ray_samples)
+        accumulation   = self.renderer_accumulation(weights=weights)
+
+        nerfacto_rgb = self.renderer_rgb(rgb=nerfacto_field_outputs[FieldHeadNames.RGB], weights=nerfacto_weights_static)
+        semantics = self.renderer_semantics(
+            fruit_proposal_field_outputs[FieldHeadNames.SEMANTICS], weights=semantic_weights
+        )
 
         # Compute RGB
         nerfacto_weights = ray_samples.get_weights(nerfacto_field_outputs[FieldHeadNames.DENSITY])
