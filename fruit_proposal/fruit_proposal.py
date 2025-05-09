@@ -140,8 +140,9 @@ class FruitProposalModel(Model):
 
         appearance_embedding_dim = self.config.appearance_embed_dim if self.config.use_appearance_embedding else 0
 
-        # Fields
-        """SEMANTIC PROPOSAL FIELD"""
+        """
+        SEMANTIC PROPOSAL FIELD
+        """
         self.fruit_proposal_field = FruitProposalField(
             aabb = self.scene_box.aabb,
             num_levels = self.config.num_levels,
@@ -153,7 +154,9 @@ class FruitProposalModel(Model):
             implementation = self.config.implementation
         )
 
-        """NERFACTO FIELD"""
+        """
+        NERFACTO FIELD
+        """
         self.nerfacto_field = NerfactoField(
             self.scene_box.aabb,
             hidden_dim=self.config.hidden_dim,
@@ -433,6 +436,9 @@ class FruitProposalModel(Model):
         metrics_dict = {}
 
 
+        """
+        FOR SEMANTICS
+        """
         pred_logits = outputs["semantics"]  # [N_rays, num_classes]
         pred_logits = torch.clamp(pred_logits, min=-3.8, max=7)
         N_rays = pred_logits.shape[0]
