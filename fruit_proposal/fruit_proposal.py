@@ -270,9 +270,15 @@ class FruitProposalModel(Model):
         self.colormap = torch.tensor(cmap.colors, dtype=torch.float32)
 
     def get_param_groups(self) -> Dict[str, List[Parameter]]:
+        """
+        TODO
+        Return a dict mapping group names to lists of Parameters.
+        Nerfstudio will merge this with the DataManager param groups.
+        """
         param_groups = {}
         param_groups["proposal_networks"] = list(self.proposal_networks.parameters())
-        param_groups["fields"] = list(self.nerfacto_field.parameters())
+        param_groups["nerfacto_fields"] = list(self.nerfacto_field.parameters())
+        param_groups["fruit_proposal_fields"] = list(self.fruit_proposal_field.parameters())
         self.camera_optimizer.get_param_groups(param_groups=param_groups)
         return param_groups
 
@@ -508,11 +514,49 @@ class FruitProposalModel(Model):
         return metrics_dict
 
 
-    def get_image_metrics_and_images(self, outputs, batch):
+    def get_image_metrics_and_images(
+        self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]
+    ) -> Tuple[Dict[str, float], Dict[str, torch.Tensor]]:
         """
-        Return:
-          - {} for scalar image‐metrics
-          - {"semantics": ..., ...} for visuals
+        FOR RGB
+        """
+        gt_rgb = batch["image"].to(self.device)
+        predicted_rgb = outputs["rgb"]  # Blended with background (black if random background)
+        gt_rgb = self.renderer_rgb.blend_background(gt_rgb)
+        acc = colormaps.apply_colormap(outputs["accumulation"])
+        depth = colormaps.apply_depth_colormap(
+            outputs["depth"],
+            accumulation=outputs["accumulation"],
+        )
+
+        combined_rgb = torch.cat([gt_rgb, predicted_rgb], dim=1)
+        combined_acc = torch.cat([acc], dim=1)
+        combined_depth = torch.cat([depth], dim=1)
+
+        # Switch images from [H, W, C] to [1, C, H, W] for metrics computations
+        gt_rgb = torch.moveaxis(gt_rgb, -1, 0)[None, ...]
+        predicted_rgb = torch.moveaxis(predicted_rgb, -1, 0)[None, ...]
+
+        psnr = self.psnr(gt_rgb, predicted_rgb)
+        ssim = self.ssim(gt_rgb, predicted_rgb)
+        lpips = self.lpips(gt_rgb, predicted_rgb)
+
+        # all of these metrics will be logged as scalars
+        metrics_dict = {"psnr": float(psnr.item()), "ssim": float(ssim)}  # type: ignore
+        metrics_dict["lpips"] = float(lpips)
+
+        images_dict = {"img": combined_rgb, "accumulation": combined_acc, "depth": combined_depth}
+
+        for i in range(self.config.num_proposal_iterations):
+            key = f"prop_depth_{i}"
+            prop_depth_i = colormaps.apply_depth_colormap(
+                outputs[key],
+                accumulation=outputs["accumulation"],
+            )
+            images_dict[key] = prop_depth_i
+
+        """
+        FOR SEMANTICS
         """
         images_dict: Dict[str, torch.Tensor] = {}
 
@@ -530,22 +574,4 @@ class FruitProposalModel(Model):
         sem_vis = colormaps.apply_colormap(pred_labels)          # [B,H,W,3] uint8
         images_dict["semantics"] = sem_vis
 
-        return {}, images_dict
-
-    def get_param_groups(self) -> Dict[str, List[Parameter]]:
-        """
-        Return a dict mapping group names to lists of Parameters.
-        Nerfstudio will merge this with the DataManager param groups.
-        """
-        param_groups: Dict[str, List[Parameter]] = {}
-
-        # 1) Proposal networks
-        param_groups["proposal_networks"] = list(self.proposal_networks.parameters())
-
-        # 2) The semantic‐only field
-        param_groups["fields"] = list(self.field.parameters())
-
-        # 3) (Optional) any other modules you added, e.g. camera optimizer
-        # param_groups["camera_optimizer"] = list(self.camera_optimizer.parameters())
-
-        return param_groups
+        return metrics_dict, images_dict
