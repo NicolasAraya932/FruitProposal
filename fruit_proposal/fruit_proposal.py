@@ -312,6 +312,10 @@ class FruitProposalModel(Model):
     def get_outputs(self, ray_bundle: RayBundle):
         """Compute outputs for semantics only."""
         outputs = {}
+        nerfacto_weights_list = []
+        nerfacto_ray_samples_list = []
+        fruit_proposal_weights_list = []
+        fruit_proposal_ray_samples_list = []
 
         if self.training:
             self.camera_optimizer.apply_to_raybundle(ray_bundle)
@@ -325,9 +329,16 @@ class FruitProposalModel(Model):
         """
         FOR RGB
         """
+        # Compute field outputs
         nerfacto_field_outputs = self.nerfacto_field.forward(ray_samples, compute_normals=self.config.predict_normals)
         if self.config.use_gradient_scaling:
-            nerfacto_field_field_outputs = scale_gradients_by_distance_squared(nerfacto_field_outputs, ray_samples)
+            nerfacto_field_outputs = scale_gradients_by_distance_squared(nerfacto_field_outputs, ray_samples)
+
+        # Compute RGB
+        nerfacto_weights = ray_samples.get_weights(nerfacto_field_outputs[FieldHeadNames.DENSITY])
+        nerfacto_weights_list.append(nerfacto_weights)
+        nerfacto_ray_samples_list.append(ray_samples)
+
     
         """
         FOR SEMANTICS
