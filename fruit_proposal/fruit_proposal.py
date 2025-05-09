@@ -435,6 +435,20 @@ class FruitProposalModel(Model):
     def get_metrics_dict(self, outputs, batch):
         metrics_dict = {}
 
+        """
+        FOR RGB
+        """
+        gt_rgb = batch["image"].to(self.device)  # RGB or RGBA image
+        gt_rgb = self.renderer_rgb.blend_background(gt_rgb)  # Blend if RGBA
+        predicted_rgb = outputs["rgb"]
+        metrics_dict.update({"rgb_psnr": self.psnr(predicted_rgb, gt_rgb)})
+
+        if self.training:
+            metrics_dict.update({
+                "distortion":distortion_loss(outputs["weights_list"], outputs["ray_samples_list"])
+                })
+
+        self.camera_optimizer.get_metrics_dict(metrics_dict)
 
         """
         FOR SEMANTICS
@@ -443,14 +457,12 @@ class FruitProposalModel(Model):
         pred_logits = torch.clamp(pred_logits, min=-3.8, max=7)
         N_rays = pred_logits.shape[0]
 
-        rgb_values = batch["image"][:,:3].to(self.device)
+        rgb_values = batch["binary_img"][:,:3].to(self.device)
         summed_rgb = rgb_values.sum(dim=-1)
 
         # Convert summed_rgb to binary: 1 if non-zero, 0 otherwise
         binary_mask = (summed_rgb != 0).long()
-        
         assert torch.all((binary_mask == 0) | (binary_mask == 1)), "Ground truth cannot be interpreted as binary mask"
-
         gt_sem = binary_mask
 
         # Get ray_indices (if available)
@@ -460,10 +472,9 @@ class FruitProposalModel(Model):
 
         # Predictions
         pred_labels = torch.argmax(torch.nn.functional.softmax(pred_logits, dim=-1), dim=-1) # [N_rays]
-
-        metrics_dict["semantic_accuracy"] = (pred_labels == gt_labels).float().mean()
-        # To print the accuracy
-        # print(f"Semantic accuracy: {metrics_dict['semantic_accuracy'].item()}")
+        
+        metrics_dict.update({"semantic_accuracy": (pred_labels == gt_labels).float().mean()})
+        metrics_dict.update({"semantic_psnr": self.psnr(pred_labels, gt_labels)})
 
         return metrics_dict
 
