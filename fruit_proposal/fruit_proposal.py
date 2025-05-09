@@ -312,10 +312,6 @@ class FruitProposalModel(Model):
     def get_outputs(self, ray_bundle: RayBundle):
         """Compute outputs for semantics only."""
         outputs = {}
-        nerfacto_weights_list = []
-        nerfacto_ray_samples_list = []
-        fruit_proposal_weights_list = []
-        fruit_proposal_ray_samples_list = []
 
         if self.training:
             self.camera_optimizer.apply_to_raybundle(ray_bundle)
@@ -340,59 +336,31 @@ class FruitProposalModel(Model):
         """
         nerfacto_weights_static       = ray_samples.get_weights(nerfacto_field_outputs[FieldHeadNames.DENSITY])
         fruit_proposal_weights_static = ray_samples.get_weights(fruit_proposal_field_outputs[FieldHeadNames.DENSITY])
-
         weights = nerfacto_weights_static + fruit_proposal_weights_static
         weights = weights / (torch.sum(weights, dim=-2, keepdim=True) + 1e-10)
-        with torch.no_grad():
-            depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
-        expected_depth = self.renderer_expected_depth(weights=weights, ray_samples=ray_samples)
+        depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
         accumulation   = self.renderer_accumulation(weights=weights)
+        outputs.update({"depth": depth})
+        outputs.update({"accumulation": accumulation})
+        outputs.update({"ray_samples": ray_samples})
 
+        weights_list.append(weights)
+        ray_samples_list.append(ray_samples)
+
+        """
+        Rendering the RGB and semantics
+        """
         nerfacto_rgb = self.renderer_rgb(rgb=nerfacto_field_outputs[FieldHeadNames.RGB], weights=nerfacto_weights_static)
         semantics = self.renderer_semantics(
-            fruit_proposal_field_outputs[FieldHeadNames.SEMANTICS], weights=semantic_weights
+            fruit_proposal_field_outputs[FieldHeadNames.SEMANTICS], weights=fruit_proposal_weights_static
         )
-
-        # Compute RGB
-        nerfacto_weights = ray_samples.get_weights(nerfacto_field_outputs[FieldHeadNames.DENSITY])
-        nerfacto_weights_list.append(nerfacto_weights)
-        nerfacto_ray_samples_list.append(ray_samples)
-
-        # Render RGB
-        nerfacto_rgb = self.renderer_rgb(rgb=nerfacto_field_outputs[FieldHeadNames.RGB], weights=nerfacto_weights)
-        with torch.no_grad():
-            depth = self.renderer_depth(weights=nerfacto_weights, ray_samples=ray_samples)
-        nerfacto_expected_depth = self.renderer_expected_depth(weights=nerfacto_weights, ray_samples=ray_samples)
-        nerfacto_accumulation = self.renderer_accumulation(weights=nerfacto_weights)
-
-        outputs.update({"nerfacto_rgb": nerfacto_rgb})
-        outputs.update({"depth": depth})
-        outputs.update({"expected_depth": nerfacto_expected_depth})
-        outputs.update({"accumulation": nerfacto_accumulation})
-
-        """
-        FOR SEMANTICS
-        """
-
-        # Compute field outputs
-        fruit_proposal_field_outputs = self.fruit_proposal_field(ray_samples)
-        if self.config.use_gradient_scaling:
-            fruit_proposal_field_outputs = scale_gradients_by_distance_squared(fruit_proposal_field_outputs, ray_samples)
-
-        # Compute density weights
-        fruit_proposal_weights_static = ray_samples.get_weights(fruit_proposal_field_outputs[FieldHeadNames.DENSITY])
-        weights_list.append(fruit_proposal_weights_static)
-
-        # Render depth
-        depth = self.renderer_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
-        outputs.update({"depth": depth})
-
-        # Render semantics
-        semantic_weights = fruit_proposal_weights_static
-        semantics = self.renderer_semantics(
-            fruit_proposal_field_outputs[FieldHeadNames.SEMANTICS], weights=semantic_weights
-        )
+        semantic_labels = torch.argmax(torch.nn.functional.softmax(semantics, dim=-1), dim=-1)
+        outputs.update({"rgb": nerfacto_rgb})
         outputs.update({"semantics": semantics})
+        outputs.update({"semantic_labels": semantic_labels})
+
+        
+
 
         # Apply colormap for visualization
         semantic_labels = torch.argmax(torch.nn.functional.softmax(semantics, dim=-1), dim=-1)
