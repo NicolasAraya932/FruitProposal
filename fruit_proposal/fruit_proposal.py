@@ -262,7 +262,7 @@ class FruitProposalModel(Model):
         self.lpips = LearnedPerceptualImagePatchSimilarity(normalize=True)
         self.step = 0
 
-        """TO DEFINE IF IT'S STILL NEEDED"""
+        """TODO TO DEFINE IF IT'S STILL NEEDED"""
         import matplotlib.pyplot as plt
         
         # Initialize colormap using matplotlib
