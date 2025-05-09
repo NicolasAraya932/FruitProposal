@@ -345,6 +345,13 @@ class FruitProposalModel(Model):
             depth = self.renderer_depth(weights=nerfacto_weights, ray_samples=ray_samples)
         nerfacto_expected_depth = self.renderer_expected_depth(weights=nerfacto_weights, ray_samples=ray_samples)
         nerfacto_accumulation = self.renderer_accumulation(weights=nerfacto_weights)
+
+        outputs.update({"nerfacto_rgb": nerfacto_rgb})
+        outputs.update({"depth": depth})
+        outputs.update({"expected_depth": nerfacto_expected_depth})
+        outputs.update({"accumulation": nerfacto_accumulation})
+
+
     
         """
         FOR SEMANTICS
