@@ -339,6 +339,12 @@ class FruitProposalModel(Model):
         nerfacto_weights_list.append(nerfacto_weights)
         nerfacto_ray_samples_list.append(ray_samples)
 
+        # Render RGB
+        nerfacto_rgb = self.renderer_rgb(rgb=nerfacto_field_outputs[FieldHeadNames.RGB], weights=nerfacto_weights)
+        with torch.no_grad():
+            depth = self.renderer_depth(weights=nerfacto_weights, ray_samples=ray_samples)
+        nerfacto_expected_depth = self.renderer_expected_depth(weights=nerfacto_weights, ray_samples=ray_samples)
+        nerfacto_accumulation = self.renderer_accumulation(weights=nerfacto_weights)
     
         """
         FOR SEMANTICS
