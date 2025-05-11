@@ -19,7 +19,7 @@ Semantic NeRF-W implementation which should be fast enough to view in the viewer
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, Type, Literal
+from typing      import (Dict, List, Tuple, Type, Literal)
 
 import sys
 import numpy as np
@@ -27,7 +27,7 @@ import torch
 from torch.nn import Parameter
 from torch.nn import CrossEntropyLoss
 
-from nerfstudio.cameras.rays import RayBundle, RaySamples
+from nerfstudio.cameras.rays              import RayBundle, RaySamples
 from nerfstudio.cameras.camera_optimizers import CameraOptimizer, CameraOptimizerConfig
 
 from nerfstudio.engine.callbacks import (
@@ -36,11 +36,11 @@ from nerfstudio.engine.callbacks import (
     TrainingCallbackLocation,
 )
 
-from nerfstudio.field_components.field_heads import FieldHeadNames
+from nerfstudio.field_components.field_heads         import FieldHeadNames
 from nerfstudio.field_components.spatial_distortions import SceneContraction
-from nerfstudio.fields.density_fields import HashMLPDensityField
-from nerfstudio.fields.nerfacto_field import NerfactoField
-from fruit_proposal.fruit_proposal_field import FruitProposalField
+from nerfstudio.fields.density_fields                import HashMLPDensityField
+from nerfstudio.fields.nerfacto_field                import NerfactoField
+from fruit_proposal.fruit_proposal_field             import FruitProposalField
 
 from nerfstudio.model_components.losses import (
     MSELoss,
@@ -51,17 +51,17 @@ from nerfstudio.model_components.losses import (
     scale_gradients_by_distance_squared,
 )
 from nerfstudio.model_components.ray_samplers import ProposalNetworkSampler, UniformSampler
-from nerfstudio.model_components.renderers import (
+from nerfstudio.model_components.renderers    import (
     AccumulationRenderer,
     DepthRenderer,
     NormalsRenderer,
     RGBRenderer,
     SemanticRenderer,
 )
-from nerfstudio.model_components.shaders import NormalsShader
+from nerfstudio.model_components.shaders         import NormalsShader
 from nerfstudio.model_components.scene_colliders import NearFarCollider
-from nerfstudio.models.base_model import Model, ModelConfig
-from nerfstudio.utils import colormaps
+from nerfstudio.models.base_model                import Model, ModelConfig
+from nerfstudio.utils                            import colormaps
 
 from nerfstudio.utils.rich_utils import CONSOLE
 
@@ -231,9 +231,9 @@ class FruitProposalModel(Model):
         )
 
         # Collider
-        self.collider = NearFarCollider(
-            near_plane=self.config.near_plane,
-            far_plane=self.config.far_plane,
+        self.collider  = NearFarCollider(
+            near_plane = self.config.near_plane,
+            far_plane  = self.config.far_plane,
         ) 
         
         # Renderers
@@ -254,7 +254,7 @@ class FruitProposalModel(Model):
 
         # metrics
         from torchmetrics.functional import structural_similarity_index_measure
-        from torchmetrics.image import PeakSignalNoiseRatio
+        from torchmetrics.image      import PeakSignalNoiseRatio
         from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
         self.psnr = PeakSignalNoiseRatio(data_range=1.0)
