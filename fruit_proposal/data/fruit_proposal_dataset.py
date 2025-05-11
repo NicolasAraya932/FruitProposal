@@ -1,44 +1,48 @@
 """
-Semantic dataset.
+Semantic dataset for handling images, masks, and binary images.
 """
 
-from typing import Dict
-
-import torch
+from typing import Dict, Literal, Float
 from pathlib import Path
-import numpy as np
 from PIL import Image
-from typing import List, Tuple, Union
-
+from torch import Tensor
+import torch
+import numpy as np
 from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs, Semantics
 from nerfstudio.data.datasets.base_dataset import InputDataset
 
 
 class FruitDataset(InputDataset):
-    """Dataset that returns images and binary_img and masks.
+    """Dataset that returns images, masks, and binary images.
 
     Args:
-        dataparser_outputs: description of where and how to read input images.
+        dataparser_outputs: Description of where and how to read input images.
+        scale_factor: Factor to scale the images and masks.
     """
 
     exclude_batch_keys_from_device = InputDataset.exclude_batch_keys_from_device + ["mask", "binary_img"]
 
     def __init__(self, dataparser_outputs: DataparserOutputs, scale_factor: float = 1.0):
         super().__init__(dataparser_outputs, scale_factor)
-        self.binary_img = dataparser_outputs.metadata.get("binary_img", None)
 
-        assert "binary_img" in dataparser_outputs.metadata.keys() and isinstance(self.metadata["binary_img"], Semantics), "No semantic instance could be found! Is a semantic folder included in the input folder and transform.json file?"
+    def get_with_binary_data(self, image_idx: int,
+                        binary_image_type: Literal["uint8", "float32"] = "float32") -> Dict:
+        """Returns the ImageDataset data as a dictionary.
 
-        self.binary_img = self.metadata["binary_img"]
+        Args:
+            image_idx: The image index in the dataset.
+            image_type: the type of images returned
+        """
+        # image_idx + image + mask (if exists)
+        data = self.get_data(image_idx, binary_image_type)
 
-    def get_metadata(self, data: Dict) -> Dict:
-        filepath = self.binary_img.filenames[data["image_idx"]]
-
-        if image_type == "float32":
-            image = self.get_image_float32(image_idx)
-        elif image_type == "uint8":
-            image = self.get_image_uint8(image_idx)
+        # To process the binary image and num_classes
+        if binary_image_type == "float32":
+            binary_img = self.get_image_float32(image_idx)
+        elif binary_image_type == "uint8":
+            binary_img = self.get_image_uint8(image_idx)
         else:
-            raise NotImplementedError(f"image_type (={image_type}) getter was not implemented, use uint8 or float32")
-
-        return {"binary_img": self.binary_img.filenames[data["image_idx"]]}
+            raise NotImplementedError(f"image_type (={binary_image_type}) getter was not implemented, use uint8 or float32")
+        
+        data.update({"binary_img"  : binary_img})
+        return data
