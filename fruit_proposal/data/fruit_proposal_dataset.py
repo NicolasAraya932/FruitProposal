@@ -14,61 +14,31 @@ from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs, Seman
 from nerfstudio.data.datasets.base_dataset import InputDataset
 
 
-def get_semantics_and_mask_tensors_from_path(
-        filepath: Path, mask_indices: Union[List, torch.Tensor], scale_factor: float = 1.0
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    Utility function to read segmentation from the given filepath
-    If no mask is required - use mask_indices = []
-    """
-    if isinstance(mask_indices, List):
-        mask_indices = torch.tensor(mask_indices, dtype=torch.int64).view(1, 1, -1)
-    pil_image = Image.open(filepath)
-    if scale_factor != 1.0:
-        width, height = pil_image.size
-        newsize = (int(width * scale_factor), int(height * scale_factor))
-        pil_image = pil_image.resize(newsize, resample=Image.NEAREST)
-    # semantics = torch.from_numpy(np.array(pil_image, dtype="int64"))[..., None]
-    semantics = torch.from_numpy(np.array(pil_image, dtype="int64"))[..., None]
-
-    if 'jpg' in filepath.__str__().lower():
-        semantics[..., 0][semantics[..., 0] <= 125] = 0
-        semantics[..., 0][semantics[..., 0] > 125] = 255
-        semantics = semantics / 255
-    elif semantics.max() > 1.:
-        semantics = semantics / 255
-    else:
-        raise ValueError("Please look at mask file manually! How to normalize")
-    mask = torch.sum(semantics == mask_indices, dim=-1, keepdim=True) == 0
-    return semantics, mask
-
-
 class FruitDataset(InputDataset):
-    """Dataset that returns images and semantics and masks.
+    """Dataset that returns images and binary_img and masks.
 
     Args:
         dataparser_outputs: description of where and how to read input images.
     """
 
-    exclude_batch_keys_from_device = InputDataset.exclude_batch_keys_from_device + ["mask", "semantics"]
+    exclude_batch_keys_from_device = InputDataset.exclude_batch_keys_from_device + ["mask", "binary_img"]
 
     def __init__(self, dataparser_outputs: DataparserOutputs, scale_factor: float = 1.0):
         super().__init__(dataparser_outputs, scale_factor)
+        self.binary_img = dataparser_outputs.metadata.get("binary_img", None)
 
-        assert "semantics" in dataparser_outputs.metadata.keys() and isinstance(self.metadata["semantics"], Semantics), "No semantic instance could be found! Is a semantic folder included in the input folder and transform.json file?"
-        self.semantics = self.metadata["semantics"]
-        self.mask_indices = torch.tensor(
-            [self.semantics.classes.index(mask_class) for mask_class in self.semantics.mask_classes]
-        ).view(1, 1, -1)
+        assert "binary_img" in dataparser_outputs.metadata.keys() and isinstance(self.metadata["binary_img"], Semantics), "No semantic instance could be found! Is a semantic folder included in the input folder and transform.json file?"
+
+        self.binary_img = self.metadata["binary_img"]
 
     def get_metadata(self, data: Dict) -> Dict:
-        # handle mask
-        filepath = self.semantics.filenames[data["image_idx"]]
-        semantic_label, mask = get_semantics_and_mask_tensors_from_path(
-            filepath=filepath, mask_indices=self.mask_indices, scale_factor=self.scale_factor
-        )
+        filepath = self.binary_img.filenames[data["image_idx"]]
 
-        if semantic_label.dim() == 3:
-            semantic_label = semantic_label[..., None, :]
+        if image_type == "float32":
+            image = self.get_image_float32(image_idx)
+        elif image_type == "uint8":
+            image = self.get_image_uint8(image_idx)
+        else:
+            raise NotImplementedError(f"image_type (={image_type}) getter was not implemented, use uint8 or float32")
 
-        return {"fruit_mask": semantic_label[..., 0, 0].unsqueeze(-1)}
+        return {"binary_img": self.binary_img.filenames[data["image_idx"]]}
