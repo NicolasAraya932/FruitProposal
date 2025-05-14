@@ -8,8 +8,9 @@ from PIL import Image
 from torch import Tensor
 import torch
 import numpy as np
-from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs, Semantics
 from nerfstudio.data.datasets.base_dataset import InputDataset
+
+from fruit_proposal.data.dataparser.fruit_proposal_base_dataparser import FruitProposalDataparserOutputs
 
 class FruitDataset(InputDataset):
     """Dataset that returns images, masks, and binary images.
@@ -21,8 +22,9 @@ class FruitDataset(InputDataset):
 
     exclude_batch_keys_from_device = InputDataset.exclude_batch_keys_from_device + ["mask", "binary_img"]
 
-    def __init__(self, dataparser_outputs: DataparserOutputs, scale_factor: float = 1.0):
+    def __init__(self, dataparser_outputs: FruitProposalDataparserOutputs, scale_factor: float = 1.0):
         super().__init__(dataparser_outputs, scale_factor)
+
 
     def get_with_binary_data(self, image_idx: int,
                         binary_image_type: Literal["uint8", "float32"] = "float32") -> Dict:
