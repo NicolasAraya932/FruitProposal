@@ -42,25 +42,25 @@ from nerfstudio.utils.rich_utils import CONSOLE
 MAX_AUTO_RESOLUTION = 1600
 
 @dataclass
-class FruitProposalDataparserOutputs(DataparserOutputs):
+class FruitProposalDataParserOutputs(DataparserOutputs):
     binary_filenames: List[Path] = field(
         default=None,
         metadata={"doc": "Filenames for the binary images."},
     )
 
 @dataclass
-class FruitProposalDataparserConfig(NerfstudioDataParserConfig):
+class FruitProposalDataParserConfig(NerfstudioDataParserConfig):
     """Nerfstudio dataset config"""
 
-    _target: Type = field(default_factory=lambda: FruitProposalDataparser)
+    _target: Type = field(default_factory=lambda: FruitProposalDataParser)
     """target class to instantiate"""
 
 
 @dataclass
-class FruitProposalDataparser(DataParser):
+class FruitProposalDataParser(DataParser):
     """Nerfstudio DatasetParser"""
 
-    config: FruitProposalDataparserConfig
+    config: FruitProposalDataParserConfig
     downscale_factor: Optional[int] = None
 
     def _generate_dataparser_outputs(self, split="train"):
@@ -395,7 +395,7 @@ class FruitProposalDataparser(DataParser):
                     metadata.update(sparse_points)
             self.prompted_user = True
 
-        dataparser_outputs = FruitProposalDataparserOutputs(
+        dataparser_outputs = FruitProposalDataParserOutputs(
             binary_filenames=binary_filenames, # New
             image_filenames=image_filenames,
             cameras=cameras,

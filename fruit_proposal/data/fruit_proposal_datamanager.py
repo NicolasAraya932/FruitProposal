@@ -41,9 +41,10 @@ from nerfstudio.configs.dataparser_configs import AnnotatedDataParserUnion
 from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs
 
 from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManagerConfig
+from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager
 
-from fruit_proposal.data.dataparser.fruit_proposal_base_dataparser import FruitProposalDataparserOutputs
-from fruit_proposal.data.dataparser.fruit_proposal_base_dataparser import FruitProposalDataparserConfig
+from fruit_proposal.data.dataparser.fruit_proposal_dataparser import FruitProposalDataParserOutputs
+from fruit_proposal.data.dataparser.fruit_proposal_dataparser import FruitProposalDataParserConfig
 
 
 from nerfstudio.data.datasets.base_dataset import InputDataset
@@ -65,12 +66,12 @@ from nerfstudio.data.datamanagers.base_datamanager import (
 class FruitDataManagerConfig(VanillaDataManagerConfig):
     _target: Type = field(default_factory=lambda: FruitDataManager)
     """Target class to instantiate."""
-    dataparser: AnnotatedDataParserUnion = field(default_factory=FruitProposalDataparserConfig)
+    dataparser: AnnotatedDataParserUnion = field(default_factory=FruitProposalDataParserConfig)
     """Specifies the dataparser used to unpack the data."""
 
 TDataset = TypeVar("TDataset", bound=InputDataset, default=InputDataset)
 
-class FruitDataManager(DataManager, Generic[TDataset]):
+class FruitDataManager(VanillaDataManager, Generic[TDataset]):
     """Basic stored data manager implementation.
 
     This is pretty much a port over from our old dataloading utilities, and is a little jank
@@ -86,7 +87,7 @@ class FruitDataManager(DataManager, Generic[TDataset]):
     config: FruitDataManagerConfig
     train_dataset: TDataset
     eval_dataset: TDataset
-    train_dataparser_outputs: FruitProposalDataparserOutputs
+    train_dataparser_outputs: FruitProposalDataParserOutputs
     train_pixel_sampler: Optional[PixelSampler] = None
     eval_pixel_sampler: Optional[PixelSampler] = None
 
