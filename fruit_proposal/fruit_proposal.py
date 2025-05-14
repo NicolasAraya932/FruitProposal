@@ -331,6 +331,8 @@ class FruitProposalModel(Model):
         ray_samples: RaySamples
         ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
 
+        outputs.update({"ray_samples": ray_samples})
+
         """
         Compute fields outputs
         """
@@ -343,26 +345,23 @@ class FruitProposalModel(Model):
         """
         Obtaining the density weights
         """
-        nerfacto_weights_static       = ray_samples.get_weights(nerfacto_field_outputs[FieldHeadNames.DENSITY])
         fruit_proposal_weights_static = ray_samples.get_weights(fruit_proposal_field_outputs[FieldHeadNames.DENSITY])
+        nerfacto_weights_static       = ray_samples.get_weights(nerfacto_field_outputs[FieldHeadNames.DENSITY])
+
         with torch.no_grad():
             fruit_proposal_depth   = self.renderer_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
             nerfacto_depth = self.renderer_depth(weights=nerfacto_weights_static, ray_samples=ray_samples)
+
         fruit_proposal_expected_depth   = self.renderer_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
         nerfacto_expected_depth = self.renderer_depth(weights=nerfacto_weights_static, ray_samples=ray_samples)
+
         nerfacto_accumulation   = self.renderer_accumulation(weights=nerfacto_weights_static)
         
-        outputs.update({"fruit_proposal_weights_list": fruit_proposal_weights_static})
         outputs.update({"fruit_proposal_depth": fruit_proposal_depth})
         outputs.update({"fruit_proposal_expected_depth": fruit_proposal_expected_depth})
-
         outputs.update({"nerfacto_accumulation": nerfacto_accumulation})
-        outputs.update({"nerfacto_weights_list": nerfacto_weights_static})
         outputs.update({"nerfacto_depth": nerfacto_depth})
         outputs.update({"nerfacto_expected_depth": nerfacto_expected_depth})
-
-
-        outputs.update({"ray_samples": ray_samples})
 
         ray_samples_list.append(ray_samples)
 
@@ -389,6 +388,13 @@ class FruitProposalModel(Model):
             outputs["normals"] = self.normals_shader(normals)
             outputs["pred_normals"] = self.normals_shader(pred_normals)
 
+        # These use a lot of GPU memory, so we avoid storing them for eval.
+        if self.training:
+            outputs.update({"fruit_proposal_weights_list": fruit_proposal_weights_static})
+            outputs.update({"nerfacto_weights_list": nerfacto_weights_static})
+            outputs["weights_list"] = weights_list
+            outputs["ray_samples_list"] = ray_samples_list
+
         if self.training and self.config.predict_normals:
             outputs["rendered_orientation_loss"] = orientation_loss(
                 nerfacto_weights_static.detach(), nerfacto_field_outputs[FieldHeadNames.NORMALS], ray_bundle.directions
@@ -400,7 +406,8 @@ class FruitProposalModel(Model):
             )
 
         for i in range(self.config.num_proposal_iterations):
-            outputs[f"prop_depth_{i}"] = self.renderer_depth(weights=outputs["nerfacto_weights_list"][i], ray_samples=ray_samples_list[i])
+            outputs[f"prop_depth_{i}"] = self.renderer_depth(weights=outputs["nerfacto_weights_list"][i],
+                                                             ray_samples=ray_samples_list[i])
 
         return outputs
 
@@ -418,7 +425,7 @@ class FruitProposalModel(Model):
         image = batch["image"].to(self.device)
         pred_rgb, gt_rgb = self.renderer_rgb.blend_background_for_loss_computation(
             pred_image=outputs["rgb"],
-            pred_accumulation=outputs["accumulation"],
+            pred_accumulation=outputs["nerfacto_accumulation"],
             gt_image=image,
         )
 
@@ -525,10 +532,10 @@ class FruitProposalModel(Model):
         gt_rgb = batch["image"].to(self.device)
         predicted_rgb = outputs["rgb"]  # Blended with background (black if random background)
         gt_rgb = self.renderer_rgb.blend_background(gt_rgb)
-        acc = colormaps.apply_colormap(outputs["accumulation"])
+        acc = colormaps.apply_colormap(outputs["nerfacto_accumulation"])
         depth = colormaps.apply_depth_colormap(
-            outputs["depth"],
-            accumulation=outputs["accumulation"],
+            outputs["nerfacto_depth"],
+            accumulation=outputs["nerfacto_accumulation"],
         )
 
         combined_rgb = torch.cat([gt_rgb, predicted_rgb], dim=1)
@@ -547,13 +554,15 @@ class FruitProposalModel(Model):
         metrics_dict = {"psnr": float(psnr.item()), "ssim": float(ssim)}  # type: ignore
         metrics_dict["lpips"] = float(lpips)
 
-        images_dict = {"img": combined_rgb, "accumulation": combined_acc, "depth": combined_depth}
+        images_dict = {"img": combined_rgb,
+                       "nerfacto_accumulation": combined_acc,
+                       "nerfacto_depth": combined_depth}
 
         for i in range(self.config.num_proposal_iterations):
             key = f"prop_depth_{i}"
             prop_depth_i = colormaps.apply_depth_colormap(
                 outputs[key],
-                accumulation=outputs["accumulation"],
+                accumulation=outputs["nerfacto_accumulation"],
             )
             images_dict[key] = prop_depth_i
 
