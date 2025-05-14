@@ -40,7 +40,6 @@ class FruitProposalDataparserOutputs(DataparserOutputs):
         metadata={"doc": "Filenames for the binary images."},
     )
 
-
 @dataclass
 class FruitProposalDataParserConfig(DataParserConfig):
     """Basic dataset config"""
@@ -49,7 +48,6 @@ class FruitProposalDataParserConfig(DataParserConfig):
     """_target: target class to instantiate"""
     data: Path = Path()
     """Directory specifying location of data."""
-
 
 @dataclass
 class FruitProposalDataParser(DataParser):

@@ -264,10 +264,10 @@ class FruitProposalDataparser(DataParser):
         poses[:, :3, 3] *= scale_factor
 
         # Choose image_filenames and poses based on split, but after auto orient and scaling the poses.
-        image_filenames = [image_filenames[i] for i in indices]
+        image_filenames  = [image_filenames[i] for i in indices]
         binary_filenames = [binary_filenames[i] for i in indices]
-        mask_filenames  = [mask_filenames[i] for i in indices] if len(mask_filenames) > 0 else []
-        depth_filenames = [depth_filenames[i] for i in indices] if len(depth_filenames) > 0 else []
+        mask_filenames   = [mask_filenames[i] for i in indices] if len(mask_filenames) > 0 else []
+        depth_filenames  = [depth_filenames[i] for i in indices] if len(depth_filenames) > 0 else []
 
         idx_tensor = torch.tensor(indices, dtype=torch.long)
         poses = poses[idx_tensor]
@@ -420,7 +420,7 @@ class FruitProposalDataparser(DataParser):
             self.prompted_user = True
 
         dataparser_outputs = FruitProposalDataparserOutputs(
-            binary_filenames=binary_filenames,
+            binary_filenames=binary_filenames, # New
             image_filenames=image_filenames,
             cameras=cameras,
             scene_box=scene_box,
