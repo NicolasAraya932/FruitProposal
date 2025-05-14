@@ -43,8 +43,8 @@ from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs
 from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManagerConfig
 from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager
 
-from fruit_proposal.data.dataparser.fruit_proposal_dataparser import FruitProposalDataParserOutputs
-from fruit_proposal.data.dataparser.fruit_proposal_dataparser import FruitProposalDataParserConfig
+from fruit_proposal.data.fruit_proposal_dataparser import FruitProposalDataParserOutputs
+from fruit_proposal.data.fruit_proposal_dataparser import FruitProposalDataParserConfig
 
 
 from nerfstudio.data.datasets.base_dataset import InputDataset
@@ -125,6 +125,7 @@ class FruitDataManager(VanillaDataManager, Generic[TDataset]):
             self.exclude_batch_keys_from_device.remove("mask")
         if self.config.images_on_gpu is True and "image" in self.exclude_batch_keys_from_device:
             self.exclude_batch_keys_from_device.remove("image")
+            self.exclude_batch_keys_from_device.remove("binary_img")
 
         if self.train_dataparser_outputs is not None:
             cameras = self.train_dataparser_outputs.cameras
