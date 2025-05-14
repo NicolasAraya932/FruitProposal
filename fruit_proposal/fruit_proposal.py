@@ -345,18 +345,25 @@ class FruitProposalModel(Model):
         """
         nerfacto_weights_static       = ray_samples.get_weights(nerfacto_field_outputs[FieldHeadNames.DENSITY])
         fruit_proposal_weights_static = ray_samples.get_weights(fruit_proposal_field_outputs[FieldHeadNames.DENSITY])
-        weights = nerfacto_weights_static + fruit_proposal_weights_static
-        weights = weights / (torch.sum(weights, dim=-2, keepdim=True) + 1e-10)
         with torch.no_grad():
-            depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
-        expected_depth = self.renderer_expected_depth(weights=weights, ray_samples=ray_samples)
-        accumulation   = self.renderer_accumulation(weights=weights)
-        outputs.update({"depth": depth})
-        outputs.update({"expected_depth": expected_depth})
-        outputs.update({"accumulation": accumulation})
+            fruit_proposal_depth   = self.renderer_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
+            nerfacto_depth = self.renderer_depth(weights=nerfacto_weights_static, ray_samples=ray_samples)
+        fruit_proposal_expected_depth   = self.renderer_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
+        nerfacto_expected_depth = self.renderer_depth(weights=nerfacto_weights_static, ray_samples=ray_samples)
+        nerfacto_accumulation   = self.renderer_accumulation(weights=nerfacto_weights_static)
+        
+        outputs.update({"fruit_proposal_weights_list": fruit_proposal_weights_static})
+        outputs.update({"fruit_proposal_depth": fruit_proposal_depth})
+        outputs.update({"fruit_proposal_expected_depth": fruit_proposal_expected_depth})
+
+        outputs.update({"nerfacto_accumulation": nerfacto_accumulation})
+        outputs.update({"nerfacto_weights_list": nerfacto_weights_static})
+        outputs.update({"nerfacto_depth": nerfacto_depth})
+        outputs.update({"nerfacto_expected_depth": nerfacto_expected_depth})
+
+
         outputs.update({"ray_samples": ray_samples})
 
-        weights_list.append(weights)
         ray_samples_list.append(ray_samples)
 
         """
@@ -382,23 +389,18 @@ class FruitProposalModel(Model):
             outputs["normals"] = self.normals_shader(normals)
             outputs["pred_normals"] = self.normals_shader(pred_normals)
 
-        # These use a lot of GPU memory, so we avoid storing them for eval.
-        if self.training:
-            outputs["weights_list"] = weights_list
-            outputs["ray_samples_list"] = ray_samples_list
-
         if self.training and self.config.predict_normals:
             outputs["rendered_orientation_loss"] = orientation_loss(
-                weights.detach(), nerfacto_field_outputs[FieldHeadNames.NORMALS], ray_bundle.directions
+                nerfacto_weights_static.detach(), nerfacto_field_outputs[FieldHeadNames.NORMALS], ray_bundle.directions
             )
             outputs["rendered_pred_normal_loss"] = pred_normal_loss(
-                weights.detach(),
+                nerfacto_weights_static.detach(),
                 nerfacto_field_outputs[FieldHeadNames.NORMALS].detach(),
                 nerfacto_field_outputs[FieldHeadNames.PRED_NORMALS],
             )
 
         for i in range(self.config.num_proposal_iterations):
-            outputs[f"prop_depth_{i}"] = self.renderer_depth(weights=weights_list[i], ray_samples=ray_samples_list[i])
+            outputs[f"prop_depth_{i}"] = self.renderer_depth(weights=outputs["nerfacto_weights_list"][i], ray_samples=ray_samples_list[i])
 
         return outputs
 
@@ -449,12 +451,12 @@ class FruitProposalModel(Model):
         pred_logits = torch.clamp(pred_logits, min=-3.8, max=7)
 
         # Convert summed_rgb to binary: 1 if non-zero, 0 otherwise
-        binary_values = batch["binary_mask"][:,:3].to(self.device)
+        binary_values = batch["binary_img"][:,:3].to(self.device)
         summed_rgb = binary_values.sum(dim=-1)
-        binary_mask = (summed_rgb != 0).long()
+        binary_img = (summed_rgb != 0).long()
 
-        assert torch.all((binary_mask == 0) | (binary_mask == 1)), "Ground truth cannot be interpreted as binary mask"
-        gt_sem = binary_mask
+        assert torch.all((binary_img == 0) | (binary_img == 1)), "Ground truth cannot be interpreted as binary img"
+        gt_sem = binary_img
 
         # Get ray_indices (if available)
         N_rays = pred_logits.shape[0]
@@ -496,9 +498,9 @@ class FruitProposalModel(Model):
         summed_rgb = rgb_values.sum(dim=-1)
 
         # Convert summed_rgb to binary: 1 if non-zero, 0 otherwise
-        binary_mask = (summed_rgb != 0).long()
-        assert torch.all((binary_mask == 0) | (binary_mask == 1)), "Ground truth cannot be interpreted as binary mask"
-        gt_sem = binary_mask
+        binary_img= (summed_rgb != 0).long()
+        assert torch.all((binary_img == 0) | (binary_img == 1)), "Ground truth cannot be interpreted as binary img"
+        gt_sem = binary_img
 
         # Get ray_indices (if available)
         ray_indices = batch.get("ray_indices", torch.arange(N_rays, device=self.device))
