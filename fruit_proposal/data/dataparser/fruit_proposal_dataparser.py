@@ -41,10 +41,10 @@ MAX_AUTO_RESOLUTION = 1600
 
 
 @dataclass
-class NerfstudioDataParserConfig(DataParserConfig):
+class FruitProposalDataparserConfig(DataParserConfig):
     """Nerfstudio dataset config"""
 
-    _target: Type = field(default_factory=lambda: Nerfstudio)
+    _target: Type = field(default_factory=lambda: FruitProposalDataparser)
     """target class to instantiate"""
     data: Path = Path()
     """Directory or explicit json file path specifying location of data."""
@@ -81,10 +81,10 @@ class NerfstudioDataParserConfig(DataParserConfig):
 
 
 @dataclass
-class Nerfstudio(DataParser):
+class FruitProposalDataparser(DataParser):
     """Nerfstudio DatasetParser"""
 
-    config: NerfstudioDataParserConfig
+    config: FruitProposalDataparserConfig
     downscale_factor: Optional[int] = None
 
     def _generate_dataparser_outputs(self, split="train"):
