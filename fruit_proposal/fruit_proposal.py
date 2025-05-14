@@ -359,9 +359,12 @@ class FruitProposalModel(Model):
         
         outputs.update({"fruit_proposal_depth": fruit_proposal_depth})
         outputs.update({"fruit_proposal_expected_depth": fruit_proposal_expected_depth})
+        outputs.update({"fruit_proposal_weights_list": fruit_proposal_weights_static})
+
         outputs.update({"nerfacto_accumulation": nerfacto_accumulation})
         outputs.update({"nerfacto_depth": nerfacto_depth})
         outputs.update({"nerfacto_expected_depth": nerfacto_expected_depth})
+        outputs.update({"nerfacto_weights_list": nerfacto_weights_static})
 
         ray_samples_list.append(ray_samples)
 
@@ -383,15 +386,13 @@ class FruitProposalModel(Model):
         NERFACTO FIELD HEADS
         """
         if self.config.predict_normals:
-            normals = self.renderer_normals(normals=nerfacto_field_outputs[FieldHeadNames.NORMALS], weights=weights)
-            pred_normals = self.renderer_normals(nerfacto_field_outputs[FieldHeadNames.PRED_NORMALS], weights=weights)
+            normals      = self.renderer_normals(normals=nerfacto_field_outputs[FieldHeadNames.NORMALS], weights=nerfacto_weights_static)
+            pred_normals = self.renderer_normals(normals=nerfacto_field_outputs[FieldHeadNames.PRED_NORMALS], weights=nerfacto_weights_static)
             outputs["normals"] = self.normals_shader(normals)
             outputs["pred_normals"] = self.normals_shader(pred_normals)
 
         # These use a lot of GPU memory, so we avoid storing them for eval.
         if self.training:
-            outputs.update({"fruit_proposal_weights_list": fruit_proposal_weights_static})
-            outputs.update({"nerfacto_weights_list": nerfacto_weights_static})
             outputs["weights_list"] = weights_list
             outputs["ray_samples_list"] = ray_samples_list
 
@@ -406,7 +407,9 @@ class FruitProposalModel(Model):
             )
 
         for i in range(self.config.num_proposal_iterations):
-            outputs[f"prop_depth_{i}"] = self.renderer_depth(weights=outputs["nerfacto_weights_list"][i],
+            outputs[f"prop_nerfacto_depth_{i}"] = self.renderer_depth(weights=outputs["nerfacto_weights_list"][i],
+                                                             ray_samples=ray_samples_list[i])
+            outputs[f"prop_fruit_depth_{i}"] = self.renderer_depth(weights=outputs["fruit_proposal_weights_list"][i],
                                                              ray_samples=ray_samples_list[i])
 
         return outputs
