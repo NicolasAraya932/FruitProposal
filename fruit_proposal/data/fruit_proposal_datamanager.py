@@ -39,7 +39,13 @@ from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.configs.base_config import InstantiateConfig
 from nerfstudio.configs.dataparser_configs import AnnotatedDataParserUnion
 from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs
-from nerfstudio.data.dataparsers.blender_dataparser import BlenderDataParserConfig
+
+from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManagerConfig
+
+from fruit_proposal.data.dataparser.fruit_proposal_base_dataparser import FruitProposalDataparserOutputs
+from fruit_proposal.data.dataparser.fruit_proposal_base_dataparser import FruitProposalDataparserConfig
+
+
 from nerfstudio.data.datasets.base_dataset import InputDataset
 from nerfstudio.data.pixel_samplers import PatchPixelSamplerConfig, PixelSampler, PixelSamplerConfig
 from nerfstudio.data.utils.dataloaders import CacheDataloader, FixedIndicesEvalDataloader, RandIndicesEvalDataloader
@@ -54,60 +60,17 @@ from nerfstudio.data.datamanagers.base_datamanager import (
     DataManager,
     DataManagerConfig)
 
+
 @dataclass
-class VanillaDataManagerConfig(DataManagerConfig):
-    """A basic data manager for a ray-based model"""
-
-    _target: Type = field(default_factory=lambda: VanillaDataManager)
+class FruitDataManagerConfig(VanillaDataManagerConfig):
+    _target: Type = field(default_factory=lambda: FruitDataManager)
     """Target class to instantiate."""
-    dataparser: AnnotatedDataParserUnion = field(default_factory=BlenderDataParserConfig)
+    dataparser: AnnotatedDataParserUnion = field(default_factory=FruitProposalDataparserConfig)
     """Specifies the dataparser used to unpack the data."""
-    train_num_rays_per_batch: int = 1024
-    """Number of rays per batch to use per training iteration."""
-    train_num_images_to_sample_from: int = -1
-    """Number of images to sample during training iteration."""
-    train_num_times_to_repeat_images: int = -1
-    """When not training on all images, number of iterations before picking new
-    images. If -1, never pick new images."""
-    eval_num_rays_per_batch: int = 1024
-    """Number of rays per batch to use per eval iteration."""
-    eval_num_images_to_sample_from: int = -1
-    """Number of images to sample during eval iteration."""
-    eval_num_times_to_repeat_images: int = -1
-    """When not evaluating on all images, number of iterations before picking
-    new images. If -1, never pick new images."""
-    eval_image_indices: Optional[Tuple[int, ...]] = (0,)
-    """Specifies the image indices to use during eval; if None, uses all."""
-    collate_fn: Callable[[Any], Any] = cast(Any, staticmethod(nerfstudio_collate))
-    """Specifies the collate function to use for the train and eval dataloaders."""
-    camera_res_scale_factor: float = 0.5
-    """The scale factor for scaling spatial data such as images, mask, semantics
-    along with relevant information about camera intrinsics
-    """
-    patch_size: int = 1
-    """Size of patch to sample from. If > 1, patch-based sampling will be used."""
-
-    # tyro.conf.Suppress prevents us from creating CLI arguments for this field.
-    camera_optimizer: tyro.conf.Suppress[Optional[CameraOptimizerConfig]] = field(default=None)
-    """Deprecated, has been moved to the model config."""
-    pixel_sampler: PixelSamplerConfig = field(default_factory=PixelSamplerConfig)
-    """Specifies the pixel sampler used to sample pixels from images."""
-
-    def __post_init__(self):
-        """Warn user of camera optimizer change."""
-        if self.camera_optimizer is not None:
-            import warnings
-
-            CONSOLE.print(
-                "\nCameraOptimizerConfig has been moved from the DataManager to the Model.\n", style="bold yellow"
-            )
-            warnings.warn("above message coming from", FutureWarning, stacklevel=3)
-
 
 TDataset = TypeVar("TDataset", bound=InputDataset, default=InputDataset)
 
-
-class VanillaDataManager(DataManager, Generic[TDataset]):
+class FruitDataManager(DataManager, Generic[TDataset]):
     """Basic stored data manager implementation.
 
     This is pretty much a port over from our old dataloading utilities, and is a little jank
@@ -120,16 +83,16 @@ class VanillaDataManager(DataManager, Generic[TDataset]):
         config: the DataManagerConfig used to instantiate class
     """
 
-    config: VanillaDataManagerConfig
+    config: FruitDataManagerConfig
     train_dataset: TDataset
     eval_dataset: TDataset
-    train_dataparser_outputs: DataparserOutputs
+    train_dataparser_outputs: FruitProposalDataparserOutputs
     train_pixel_sampler: Optional[PixelSampler] = None
     eval_pixel_sampler: Optional[PixelSampler] = None
 
     def __init__(
         self,
-        config: VanillaDataManagerConfig,
+        config: FruitDataManagerConfig,
         device: Union[torch.device, str] = "cpu",
         test_mode: Literal["test", "val", "inference"] = "val",
         world_size: int = 1,
@@ -176,15 +139,15 @@ class VanillaDataManager(DataManager, Generic[TDataset]):
     def dataset_type(self) -> Type[TDataset]:
         """Returns the dataset type passed as the generic argument"""
         default: Type[TDataset] = cast(TDataset, TDataset.__default__)  # type: ignore
-        orig_class: Type[VanillaDataManager] = get_orig_class(self, default=None)  # type: ignore
-        if type(self) is VanillaDataManager and orig_class is None:
+        orig_class: Type[FruitDataManager] = get_orig_class(self, default=None)  # type: ignore
+        if type(self) is FruitDataManager and orig_class is None:
             return default
-        if orig_class is not None and get_origin(orig_class) is VanillaDataManager:
+        if orig_class is not None and get_origin(orig_class) is FruitDataManager:
             return get_args(orig_class)[0]
 
         # For inherited classes, we need to find the correct type to instantiate
         for base in getattr(self, "__orig_bases__", []):
-            if get_origin(base) is VanillaDataManager:
+            if get_origin(base) is FruitDataManager:
                 for value in get_args(base):
                     if isinstance(value, ForwardRef):
                         if value.__forward_evaluated__:
