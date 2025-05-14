@@ -1,3 +1,16 @@
+# Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """Data parser for nerfstudio datasets."""
 
 from __future__ import annotations
@@ -58,6 +71,8 @@ class NerfstudioDataParserConfig(DataParserConfig):
     """The percentage of the dataset to use for training. Only used when eval_mode is train-split-fraction."""
     eval_interval: int = 8
     """The interval between frames to use for eval. Only used when eval_mode is eval-interval."""
+    depth_unit_scale_factor: float = 1e-3
+    """Scales the depth values to meters. Default value is 0.001 for a millimeter to meter conversion."""
     mask_color: Optional[Tuple[float, float, float]] = None
     """Replace the unknown pixels with this color. Relevant if you have a mask but still sample everywhere."""
     load_3D_points: bool = False
@@ -81,8 +96,10 @@ class Nerfstudio(DataParser):
             meta = load_from_json(self.config.data / "transforms.json")
             data_dir = self.config.data
 
-        image_filenames = []
-        binary_mask_filenames = []
+        image_filenames  = []
+        binary_filenames = []
+        mask_filenames   = []
+        depth_filenames  = []
         poses = []
 
         fx_fixed = "fl_x" in meta
@@ -152,19 +169,37 @@ class Nerfstudio(DataParser):
 
             image_filenames.append(fname)
             poses.append(np.array(frame["transform_matrix"]))
-            if "binary_mask_path" in frame:
-                binary_mask_filepath = Path(frame["binary_mask_path"])
-                binary_mask_fname = self._get_fname(
-                    binary_mask_filepath,
+
+            if "binary_img" in frame:
+                binary_img_filepath = Path(frame["binary_img"])
+                binary_img_fname = self._get_fname(
+                    binary_img_filepath,
                     data_dir,
-                    downsample_folder_prefix="binary_masks_",
+                    downsample_folder_prefix="binary_",
                 )
-                binary_mask_filenames.append(binary_mask_fname)
+                binary_filenames.append(binary_img_fname)
 
+            if "mask_path" in frame:
+                mask_filepath = Path(frame["mask_path"])
+                mask_fname = self._get_fname(
+                    mask_filepath,
+                    data_dir,
+                    downsample_folder_prefix="masks_",
+                )
+                mask_filenames.append(mask_fname)
 
-        assert len(binary_mask_filenames) == 0 or (len(binary_mask_filenames) == len(image_filenames)), """
+            if "depth_file_path" in frame:
+                depth_filepath = Path(frame["depth_file_path"])
+                depth_fname = self._get_fname(depth_filepath, data_dir, downsample_folder_prefix="depths_")
+                depth_filenames.append(depth_fname)
+
+        assert len(mask_filenames) == 0 or (len(mask_filenames) == len(image_filenames)), """
         Different number of image and mask filenames.
         You should check that mask_path is specified for every frame (or zero frames) in transforms.json.
+        """
+        assert len(depth_filenames) == 0 or (len(depth_filenames) == len(image_filenames)), """
+        Different number of image and depth filenames.
+        You should check that depth_file_path is specified for every frame (or zero frames) in transforms.json.
         """
 
         has_split_files_spec = any(f"{split}_filenames" in meta for split in ("train", "val", "test"))
@@ -226,7 +261,8 @@ class Nerfstudio(DataParser):
 
         # Choose image_filenames and poses based on split, but after auto orient and scaling the poses.
         image_filenames = [image_filenames[i] for i in indices]
-        binary_mask_filenames = [binary_mask_filenames[i] for i in indices] if len(binary_mask_filenames) > 0 else []
+        mask_filenames = [mask_filenames[i] for i in indices] if len(mask_filenames) > 0 else []
+        depth_filenames = [depth_filenames[i] for i in indices] if len(depth_filenames) > 0 else []
 
         idx_tensor = torch.tensor(indices, dtype=torch.long)
         poses = poses[idx_tensor]
@@ -382,10 +418,12 @@ class Nerfstudio(DataParser):
             image_filenames=image_filenames,
             cameras=cameras,
             scene_box=scene_box,
-            mask_filenames=binary_mask_filenames if len(binary_mask_filenames) > 0 else None,
+            mask_filenames=mask_filenames if len(mask_filenames) > 0 else None,
             dataparser_scale=scale_factor,
             dataparser_transform=dataparser_transform_matrix,
             metadata={
+                "depth_filenames": depth_filenames if len(depth_filenames) > 0 else None,
+                "depth_unit_scale_factor": self.config.depth_unit_scale_factor,
                 "mask_color": self.config.mask_color,
                 **metadata,
             },
