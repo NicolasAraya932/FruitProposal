@@ -25,7 +25,8 @@ from PIL import Image
 
 from nerfstudio.cameras import camera_utils
 from nerfstudio.cameras.cameras import CAMERA_MODEL_TO_TYPE, Cameras, CameraType
-from nerfstudio.data.dataparsers.base_dataparser import DataParser, DataParserConfig, DataparserOutputs
+from nerfstudio.data.dataparsers.base_dataparser import DataParser, DataParserConfig
+from fruit_proposal.data.dataparser.fruit_proposal_base_dataparser import FruitProposalDataparserOutputs
 from nerfstudio.data.scene_box import SceneBox
 from nerfstudio.data.utils.dataparsers_utils import (
     get_train_eval_split_all,
@@ -193,6 +194,10 @@ class Nerfstudio(DataParser):
                 depth_fname = self._get_fname(depth_filepath, data_dir, downsample_folder_prefix="depths_")
                 depth_filenames.append(depth_fname)
 
+        assert len(binary_filenames) == 0 or (len(binary_filenames) == len(image_filenames)), """
+        Different number of image and binary images filenames.
+        You should check that binary_img is specified for every frame (or zero frames) in transforms.json.
+        """
         assert len(mask_filenames) == 0 or (len(mask_filenames) == len(image_filenames)), """
         Different number of image and mask filenames.
         You should check that mask_path is specified for every frame (or zero frames) in transforms.json.
