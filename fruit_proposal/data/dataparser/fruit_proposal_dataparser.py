@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Optional, Tuple, Type
+from typing import Literal, Optional, Tuple, Type, List
 
 import numpy as np
 import torch
@@ -25,11 +25,8 @@ from PIL import Image
 
 from nerfstudio.cameras import camera_utils
 from nerfstudio.cameras.cameras import CAMERA_MODEL_TO_TYPE, Cameras, CameraType
-from nerfstudio.data.dataparsers.base_dataparser import DataParser, DataParserConfig
+from nerfstudio.data.dataparsers.base_dataparser import DataParser, DataParserConfig, DataparserOutputs
 from nerfstudio.data.dataparsers.nerfstudio_dataparser import NerfstudioDataParserConfig
-
-
-from fruit_proposal.data.dataparser.fruit_proposal_base_dataparser import FruitProposalDataparserOutputs
 
 
 from nerfstudio.data.scene_box import SceneBox
@@ -44,6 +41,12 @@ from nerfstudio.utils.rich_utils import CONSOLE
 
 MAX_AUTO_RESOLUTION = 1600
 
+@dataclass
+class FruitProposalDataparserOutputs(DataparserOutputs):
+    binary_filenames: List[Path] = field(
+        default=None,
+        metadata={"doc": "Filenames for the binary images."},
+    )
 
 @dataclass
 class FruitProposalDataparserConfig(NerfstudioDataParserConfig):
