@@ -63,6 +63,7 @@ from nerfstudio.model_components.renderers    import (
 from nerfstudio.model_components.shaders         import NormalsShader
 from nerfstudio.model_components.scene_colliders import NearFarCollider
 from nerfstudio.models.base_model                import Model, ModelConfig
+
 from nerfstudio.utils                            import colormaps
 
 from nerfstudio.utils.rich_utils import CONSOLE
@@ -76,7 +77,14 @@ class FruitProposalModelConfig(ModelConfig):
     """How far along the ray to start sampling."""
     far_plane: float = 1000.0
     """How far along the ray to stop sampling."""
-
+    background_color: Literal["random", "last_sample", "black", "white"] = "last_sample"
+    """Whether to randomize the background color."""
+    hidden_dim: int = 64
+    """Dimension of hidden layers"""
+    hidden_dim_color: int = 64
+    """Dimension of hidden layers for color network"""
+    hidden_dim_transient: int = 64
+    """Dimension of hidden layers for transient network"""
     num_levels: int = 16
     """Number of levels of the hashmap for the base mlp."""
     base_res: int = 16
@@ -87,7 +95,6 @@ class FruitProposalModelConfig(ModelConfig):
     """Size of the hashmap for the base mlp"""
     features_per_level: int = 2
     """How many hashgrid features per level"""
-
     num_semantic_classes: int = 2
     """Number of semantic classes."""
     num_nerf_samples_per_ray: int = 48
@@ -113,16 +120,38 @@ class FruitProposalModelConfig(ModelConfig):
     """Arguments for the proposal density fields."""
     proposal_initial_sampler: Literal["piecewise", "uniform"] = "piecewise"
     """Initial sampler for the proposal network. Piecewise is preferred for unbounded scenes."""
-
+    interlevel_loss_mult: float = 1.0
+    """Proposal loss multiplier."""
+    distortion_loss_mult: float = 0.002
+    """Distortion loss multiplier."""
+    orientation_loss_mult: float = 0.0001
+    """Orientation loss multiplier on computed normals."""
+    pred_normal_loss_mult: float = 0.001
+    """Predicted normal loss multiplier."""
+    use_proposal_weight_anneal: bool = True
+    """Whether to use proposal weight annealing."""
+    use_appearance_embedding: bool = True
+    """Whether to use an appearance embedding."""
+    use_average_appearance_embedding: bool = True
+    """Whether to use average appearance embedding or zeros for inference."""
+    proposal_weights_anneal_slope: float = 10.0
+    """Slope of the annealing function for the proposal weights."""
+    proposal_weights_anneal_max_num_iters: int = 1000
+    """Max num iterations for the annealing function."""
     use_single_jitter: bool = True
     """Whether use single jitter or not for the proposal networks."""
-
+    predict_normals: bool = False
+    """Whether to predict normals or not."""
+    disable_scene_contraction: bool = False
+    """Whether to disable scene contraction or not."""
+    use_gradient_scaling: bool = False
+    """Use gradient scaler where the gradients are lower for points closer to the camera."""
     implementation: Literal["tcnn", "torch"] = "tcnn"
     """Which implementation to use for the model."""
-
+    appearance_embed_dim: int = 32
+    """Dimension of the appearance embedding."""
     average_init_density: float = 1.0
     """Average initial density output from MLP. """
-
     camera_optimizer: CameraOptimizerConfig = field(default_factory=lambda: CameraOptimizerConfig(mode="SO3xR3"))
     """Config of the camera optimizer to use"""
 
@@ -150,6 +179,7 @@ class FruitProposalModel(Model):
             num_levels = self.config.num_levels,
             base_res = self.config.base_res,
             max_res = self.config.max_res,
+            num_images=self.num_train_data,
             log2_hashmap_size = self.config.log2_hashmap_size,
             features_per_level = self.config.features_per_level,
             average_init_density = self.config.average_init_density,
