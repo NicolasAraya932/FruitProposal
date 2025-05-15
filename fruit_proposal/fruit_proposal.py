@@ -359,16 +359,18 @@ class FruitProposalModel(Model):
         """
         Compute fields outputs
         """
-        outputs.update(self.nerfacto_field.forward(ray_samples, compute_normals=self.config.predict_normals))
-        outputs.update(self.fruit_proposal_field.forward(ray_samples, compute_normals=self.config.predict_normals))
+        nerfacto_field_outputs = self.nerfacto_field.forward(ray_samples, compute_normals=self.config.predict_normals)
+        fruit_proposal_field_outputs = self.fruit_proposal_field.forward(ray_samples, compute_normals=self.config.predict_normals)
+        outputs.update(nerfacto_field_outputs)
+        outputs.update(fruit_proposal_field_outputs)
         if self.config.use_gradient_scaling:
             nerfacto_field_outputs       = scale_gradients_by_distance_squared(nerfacto_field_outputs, ray_samples)
 
         """
         Obtaining the density weights
         """
-        fruit_proposal_weights_static = ray_samples.get_weights(outputs[FieldHeadNames.DENSITY])
-        nerfacto_weights_static       = ray_samples.get_weights(outputs[FieldHeadNames.DENSITY])
+        fruit_proposal_weights_static = ray_samples.get_weights(nerfacto_field_outputs[FieldHeadNames.DENSITY])
+        nerfacto_weights_static       = ray_samples.get_weights(fruit_proposal_field_outputs[FieldHeadNames.DENSITY])
 
         with torch.no_grad():
             fruit_proposal_depth   = self.renderer_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
@@ -384,7 +386,10 @@ class FruitProposalModel(Model):
         outputs.update({"fruit_proposal_weights_list": fruit_proposal_weights_static})
 
         outputs.update({"nerfacto_accumulation": nerfacto_accumulation})
+        outputs.update({"accumulation": nerfacto_accumulation})
         outputs.update({"nerfacto_depth": nerfacto_depth})
+        outputs.update({"depth": nerfacto_depth})
+        outputs.update({"expected_depth": nerfacto_expected_depth})
         outputs.update({"nerfacto_expected_depth": nerfacto_expected_depth})
         outputs.update({"nerfacto_weights_list": nerfacto_weights_static})
 
