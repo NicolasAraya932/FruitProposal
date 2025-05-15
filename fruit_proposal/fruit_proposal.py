@@ -198,13 +198,8 @@ class FruitProposalModel(Model):
             features_per_level=self.config.features_per_level,
             log2_hashmap_size=self.config.log2_hashmap_size,
             hidden_dim_color=self.config.hidden_dim_color,
-            hidden_dim_transient=self.config.hidden_dim_transient,
             spatial_distortion=scene_contraction,
             num_images=self.num_train_data,
-            use_pred_normals=self.config.predict_normals,
-            use_average_appearance_embedding=self.config.use_average_appearance_embedding,
-            appearance_embedding_dim=appearance_embedding_dim,
-            average_init_density=self.config.average_init_density,
             implementation=self.config.implementation,
         )
 
@@ -364,17 +359,16 @@ class FruitProposalModel(Model):
         """
         Compute fields outputs
         """
-        nerfacto_field_outputs = self.nerfacto_field.forward(ray_samples, compute_normals=self.config.predict_normals)
-        fruit_proposal_field_outputs = self.fruit_proposal_field.forward(ray_samples, compute_normals=self.config.predict_normals)
+        outputs.update(self.nerfacto_field.forward(ray_samples, compute_normals=self.config.predict_normals))
+        outputs.update(self.fruit_proposal_field.forward(ray_samples, compute_normals=self.config.predict_normals))
         if self.config.use_gradient_scaling:
             nerfacto_field_outputs       = scale_gradients_by_distance_squared(nerfacto_field_outputs, ray_samples)
-            fruit_proposal_field_outputs = scale_gradients_by_distance_squared(fruit_proposal_field_outputs, ray_samples)
 
         """
         Obtaining the density weights
         """
-        fruit_proposal_weights_static = ray_samples.get_weights(fruit_proposal_field_outputs[FieldHeadNames.DENSITY])
-        nerfacto_weights_static       = ray_samples.get_weights(nerfacto_field_outputs[FieldHeadNames.DENSITY])
+        fruit_proposal_weights_static = ray_samples.get_weights(outputs[FieldHeadNames.DENSITY])
+        nerfacto_weights_static       = ray_samples.get_weights(outputs[FieldHeadNames.DENSITY])
 
         with torch.no_grad():
             fruit_proposal_depth   = self.renderer_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
@@ -399,13 +393,13 @@ class FruitProposalModel(Model):
         """
         Rendering the RGB and semantics
         """
-        nerfacto_rgb = self.renderer_rgb(rgb=nerfacto_field_outputs[FieldHeadNames.RGB], weights=nerfacto_weights_static)
+        rgb = self.renderer_rgb(rgb=nerfacto_field_outputs[FieldHeadNames.RGB], weights=nerfacto_weights_static)
         semantics = self.renderer_semantics(
-            fruit_proposal_field_outputs[FieldHeadNames.SEMANTICS], weights=fruit_proposal_weights_static
+            outputs[FieldHeadNames.SEMANTICS], weights=fruit_proposal_weights_static
         )
         semantic_labels = torch.argmax(torch.nn.functional.softmax(semantics, dim=-1), dim=-1)
         semantics_colormap = self.colormap.to(self.device)[semantic_labels]
-        outputs.update({"rgb": nerfacto_rgb})
+        outputs.update({"rgb": rgb})
         outputs.update({"semantics": semantics})
         outputs.update({"semantic_labels": semantic_labels})
         outputs.update({"semantics_colormap": semantics_colormap})
@@ -414,19 +408,19 @@ class FruitProposalModel(Model):
         NERFACTO FIELD HEADS
         """
         if self.config.predict_normals:
-            normals      = self.renderer_normals(normals=nerfacto_field_outputs[FieldHeadNames.NORMALS], weights=nerfacto_weights_static)
-            pred_normals = self.renderer_normals(normals=nerfacto_field_outputs[FieldHeadNames.PRED_NORMALS], weights=nerfacto_weights_static)
+            normals      = self.renderer_normals(normals=outputs[FieldHeadNames.NORMALS], weights=nerfacto_weights_static)
+            pred_normals = self.renderer_normals(normals=outputs[FieldHeadNames.PRED_NORMALS], weights=nerfacto_weights_static)
             outputs["normals"] = self.normals_shader(normals)
             outputs["pred_normals"] = self.normals_shader(pred_normals)
 
         if self.training and self.config.predict_normals:
             outputs["rendered_orientation_loss"] = orientation_loss(
-                nerfacto_weights_static.detach(), nerfacto_field_outputs[FieldHeadNames.NORMALS], ray_bundle.directions
+                nerfacto_weights_static.detach(), outputs[FieldHeadNames.NORMALS], ray_bundle.directions
             )
             outputs["rendered_pred_normal_loss"] = pred_normal_loss(
                 nerfacto_weights_static.detach(),
-                nerfacto_field_outputs[FieldHeadNames.NORMALS].detach(),
-                nerfacto_field_outputs[FieldHeadNames.PRED_NORMALS],
+                outputs[FieldHeadNames.NORMALS].detach(),
+                outputs[FieldHeadNames.PRED_NORMALS],
             )
 
         for i in range(self.config.num_proposal_iterations):
