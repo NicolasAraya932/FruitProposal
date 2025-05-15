@@ -36,6 +36,8 @@ from nerfstudio.engine.callbacks import (
     TrainingCallbackLocation,
 )
 
+from fruit_proposal.callbacks.FruitProposalCallback import SemanticStageCallback
+
 from nerfstudio.field_components.field_heads         import FieldHeadNames
 from nerfstudio.field_components.spatial_distortions import SceneContraction
 from nerfstudio.fields.density_fields                import HashMLPDensityField
@@ -269,18 +271,14 @@ class FruitProposalModel(Model):
         cmap = plt.get_cmap("viridis", self.config.num_semantic_classes)
         self.colormap = torch.tensor(cmap.colors, dtype=torch.float32)
 
-    def get_param_groups(self) -> Dict[str, List[Parameter]]:
-        """
-        TODO
-        Return a dict mapping group names to lists of Parameters.
-        Nerfstudio will merge this with the DataManager param groups.
-        """
+    def get_param_groups(self):
         param_groups = {}
-        param_groups["proposal_networks"] = list(self.proposal_networks.parameters())
-        param_groups["nerfacto_fields"] = list(self.nerfacto_field.parameters())
-        param_groups["fruit_proposal_fields"] = list(self.fruit_proposal_field.parameters())
+        param_groups["proposal_networks"]       = list(self.proposal_networks.parameters())
+        param_groups["nerfacto_fields"]         = list(self.nerfacto_field.parameters())
+        param_groups["fruit_proposal_fields"]   = list(self.fruit_proposal_field.parameters())
         self.camera_optimizer.get_param_groups(param_groups=param_groups)
         return param_groups
+
 
     def get_training_callbacks(
         self, training_callback_attributes: TrainingCallbackAttributes
@@ -584,3 +582,19 @@ class FruitProposalModel(Model):
         images_dict["semantics"] = sem_vis
 
         return metrics_dict, images_dict
+
+    def get_training_callbacks(
+        self, training_callback_attributes: TrainingCallbackAttributes
+    ) -> List[TrainingCallback]:
+        callbacks = super().get_training_callbacks(training_callback_attributes)
+
+        # Freeze semantic field at iteration 800 
+        callbacks.append(
+            TrainingCallback(
+                where_to_run=[TrainingCallbackLocation.AFTER_TRAIN_ITERATION],
+                update_every_num_iters=1,
+                func=SemanticStageCallback(stop_step=800),
+            )
+        )
+
+        return callbacks
