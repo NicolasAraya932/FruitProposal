@@ -1,0 +1,13 @@
+[project]
+authors = ["Nicolas <nicoarayapcap@gmail.com>"]
+channels = ["conda-forge"]
+description = "Add a short description here"
+name = "01_apple_tree_1024x1024_#300"
+platforms = ["win-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+python = "3.10.*"
+pip = ">=25.0.1,<26"
