@@ -320,7 +320,6 @@ class FruitProposalModel(Model):
     
                 def bias(x, b):
                     return b * x / ((b - 1) * x + 1)
-                print(step)
     
                 anneal = bias(train_frac, self.config.proposal_weights_anneal_slope)
                 self.proposal_sampler.set_anneal(anneal)
@@ -339,10 +338,8 @@ class FruitProposalModel(Model):
                     func=self.proposal_sampler.step_cb,
                 )
             )
-        # Always add your custom callback
-        # Best: No lambda at all
+
         semantic_cb = SemanticStageCallback(stop_step=800)
-        # Correct lambda: first step, then attrs
         callbacks.append(
             TrainingCallback(
                 where_to_run=[TrainingCallbackLocation.AFTER_TRAIN_ITERATION],
@@ -524,8 +521,6 @@ class FruitProposalModel(Model):
 
     def get_metrics_dict(self, outputs, batch):
         metrics_dict = {}
-        print("Batch keys:", list(batch.keys()))
-
 
         """
         FOR RGB
