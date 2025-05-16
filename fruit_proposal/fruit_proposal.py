@@ -512,6 +512,8 @@ class FruitProposalModel(Model):
 
     def get_metrics_dict(self, outputs, batch):
         metrics_dict = {}
+        print("Batch keys:", list(batch.keys()))
+
 
         """
         FOR RGB
