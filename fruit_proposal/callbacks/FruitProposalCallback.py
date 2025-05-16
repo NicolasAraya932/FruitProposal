@@ -7,6 +7,8 @@ class SemanticStageCallback:
 
     def __call__(self, attrs: TrainingCallbackAttributes, step: int):
         # Only trigger once
+        #print(f"SemanticStageCallback: step {step}, triggered {self.triggered}, attrs {attrs}")
+
         if step < self.stop_step or self.triggered:
             return
 

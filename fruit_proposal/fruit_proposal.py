@@ -278,6 +278,7 @@ class FruitProposalModel(Model):
         self.rgb_loss        = MSELoss()
         self.semantic_loss   = CrossEntropyLoss() # Default reduction="mean")
         self.interlevel_loss = interlevel_loss
+        self.step = 0
 
         # metrics
         from torchmetrics.functional import structural_similarity_index_measure
@@ -308,23 +309,22 @@ class FruitProposalModel(Model):
     def get_training_callbacks(
         self, training_callback_attributes: TrainingCallbackAttributes
     ) -> List[TrainingCallback]:
-        callbacks = []
+        callbacks = super().get_training_callbacks(training_callback_attributes)
         if self.config.use_proposal_weight_anneal:
-            # anneal the weights of the proposal network before doing PDF sampling
             N = self.config.proposal_weights_anneal_max_num_iters
-
+    
             def set_anneal(step):
-                # https://arxiv.org/pdf/2111.12077.pdf eq. 18
                 self.step = step
                 train_frac = np.clip(step / N, 0, 1)
                 self.step = step
-
+    
                 def bias(x, b):
                     return b * x / ((b - 1) * x + 1)
-
+                print(step)
+    
                 anneal = bias(train_frac, self.config.proposal_weights_anneal_slope)
                 self.proposal_sampler.set_anneal(anneal)
-
+    
             callbacks.append(
                 TrainingCallback(
                     where_to_run=[TrainingCallbackLocation.BEFORE_TRAIN_ITERATION],
@@ -339,6 +339,19 @@ class FruitProposalModel(Model):
                     func=self.proposal_sampler.step_cb,
                 )
             )
+        # Always add your custom callback
+        # Best: No lambda at all
+        semantic_cb = SemanticStageCallback(stop_step=800)
+        # Correct lambda: first step, then attrs
+        callbacks.append(
+            TrainingCallback(
+                where_to_run=[TrainingCallbackLocation.AFTER_TRAIN_ITERATION],
+                update_every_num_iters=1,
+                func=semantic_cb,
+                args=(training_callback_attributes,),
+            )
+        )
+
         return callbacks
 
     def get_outputs(self, ray_bundle: RayBundle):
@@ -353,7 +366,6 @@ class FruitProposalModel(Model):
         """
         ray_samples: RaySamples
         ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
-
 
 
         """
@@ -382,7 +394,7 @@ class FruitProposalModel(Model):
         
         outputs.update({"fruit_proposal_weights_list": fruit_proposal_weights_list})
         outputs.update({"nerfacto_weights_list": nerfacto_weights_list})
-        outputs.update({"ray_samples_list": ray_samples})
+        outputs.update({"ray_samples_list": ray_samples_list})
 
         with torch.no_grad():
             fruit_proposal_depth   = self.renderer_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
@@ -622,19 +634,3 @@ class FruitProposalModel(Model):
         images_dict["semantics"] = sem_vis
 
         return metrics_dict, images_dict
-
-    def get_training_callbacks(
-        self, training_callback_attributes: TrainingCallbackAttributes
-    ) -> List[TrainingCallback]:
-        callbacks = super().get_training_callbacks(training_callback_attributes)
-
-        # Freeze semantic field at iteration 800 
-        callbacks.append(
-            TrainingCallback(
-                where_to_run=[TrainingCallbackLocation.AFTER_TRAIN_ITERATION],
-                update_every_num_iters=1,
-                func=SemanticStageCallback(stop_step=800),
-            )
-        )
-
-        return callbacks
