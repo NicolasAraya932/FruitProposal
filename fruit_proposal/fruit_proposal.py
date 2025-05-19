@@ -19,7 +19,7 @@ Semantic NeRF-W implementation which should be fast enough to view in the viewer
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing      import (Dict, List, Tuple, Type, Literal)
+from typing      import (Dict, List, Tuple, Type, Literal, Optional)
 
 import sys
 import numpy as np
@@ -36,7 +36,7 @@ from nerfstudio.engine.callbacks import (
     TrainingCallbackLocation,
 )
 
-from fruit_proposal.callbacks.FruitProposalCallback import SemanticStageCallback
+from fruit_proposal.callbacks.FruitProposalCallback import FruitEarlyStopCallback
 
 from nerfstudio.field_components.field_heads         import FieldHeadNames
 from nerfstudio.field_components.spatial_distortions import SceneContraction
@@ -159,6 +159,8 @@ class FruitProposalModel(Model):
     """Semantic NeRF model for binary semantics and density."""
 
     config: FruitProposalModelConfig
+    to_save: bool = False
+    last_semantic_labels: Dict = None
 
     def populate_modules(self):
         """Set the fields and modules."""
@@ -168,8 +170,6 @@ class FruitProposalModel(Model):
             scene_contraction = None
         else:
             scene_contraction = SceneContraction(order=float("inf"))
-
-        appearance_embedding_dim = self.config.appearance_embed_dim if self.config.use_appearance_embedding else 0
 
         """
         SEMANTIC PROPOSAL FIELD
@@ -237,6 +237,8 @@ class FruitProposalModel(Model):
 
         # Samplers
         def update_schedule(step):
+            if self.step >= 800 and self.step < 810:
+                self.to_save = True
             return np.clip(
                 np.interp(step, [0, self.config.proposal_warmup], [0, self.config.proposal_update_every]),
                 1,
@@ -339,15 +341,16 @@ class FruitProposalModel(Model):
                 )
             )
 
-        semantic_cb = SemanticStageCallback(stop_step=800)
-        callbacks.append(
-            TrainingCallback(
-                where_to_run=[TrainingCallbackLocation.AFTER_TRAIN_ITERATION],
-                update_every_num_iters=1,
-                func=semantic_cb,
-                args=(training_callback_attributes,),
-            )
-        )
+        # fruit_cb = FruitEarlyStopCallback(stop_step=800, save_path="saved/fruit_nerfacto.pt")
+
+        # callbacks.append(
+        #     TrainingCallback(
+        #         where_to_run=[TrainingCallbackLocation.BEFORE_TRAIN_ITERATION],
+        #         update_every_num_iters=1,
+        #         func=fruit_cb,       # no extra args needed; Nerfstudio passes attrs, step
+        #         args=(training_callback_attributes,),
+        #     )
+        # )
 
         return callbacks
 
@@ -451,6 +454,15 @@ class FruitProposalModel(Model):
             outputs[f"prop_nerfacto_depth_{i}"] = self.renderer_depth(weights=w_iter, ray_samples=rs_iter)
             outputs[f"prop_fruit_depth_{i}"]   = self.renderer_depth(weights=w_iter, ray_samples=rs_iter)
 
+        
+        # if self.to_save:
+        #     # Save the model outputs
+        #     torch.save({
+        #         "semantic_labels": outputs["semantic_labels"].cpu(),
+        #     }, "./fruit_nerfacto.pt")
+        #     CONSOLE.print(f"[FruitEarlyStop] step={self.step}: frozen & saved → saved/fruit_nerfacto.pt")
+        #     self.to_save = False
+
 
         return outputs
 
@@ -515,6 +527,8 @@ class FruitProposalModel(Model):
 
         # Cross entropy loss
         loss_dict["semantic_loss"] = self.semantic_loss(pred_logits, gt_labels)
+
+        print(sum(outputs["semantic_labels"]), loss_dict["semantic_loss"], gt_sem)
 
         return loss_dict
 

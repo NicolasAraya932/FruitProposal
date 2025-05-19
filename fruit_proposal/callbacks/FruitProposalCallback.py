@@ -1,28 +1,33 @@
+import torch
 from nerfstudio.engine.callbacks import TrainingCallbackAttributes
 
-class SemanticStageCallback:
-    def __init__(self, stop_step: int):
+class FruitEarlyStopCallback:
+    def __init__(self, stop_step: int = 800, save_path: str = "./fruit_nerfacto.pt"):
         self.stop_step = stop_step
+        self.save_path = save_path
         self.triggered = False
 
     def __call__(self, attrs: TrainingCallbackAttributes, step: int):
-        # Only trigger once after stop_step
-        if step < self.stop_step or self.triggered:
+        # Only fire once we hit stop_step
+        if self.triggered or step < self.stop_step:
             return
+        self.triggered = True
 
-        # 1) Freeze semantic field parameters
-        model = attrs.pipeline.model   # ← correct access to your FruitProposalModel
+        model = attrs.pipeline.model  # your Pipeline → Model reference:contentReference[oaicite:4]{index=4}
+
+        # Freeze fruit field
         for p in model.fruit_proposal_field.parameters():
             p.requires_grad = False
 
-        # 2) Remove its optimizer & scheduler
-        # Nerfstudio’s Optimizers creates one optimizer per param group name
-        removed_opt = attrs.optimizers.optimizers.pop("fruit_proposal_fields", None)
-        removed_sched = attrs.optimizers.schedulers.pop("fruit_proposal_fields", None)
-        if removed_opt:
-            print("Removed semantic optimizer")
-        if removed_sched:
-            print("Removed semantic scheduler")
+        ray_bundle, batch = attrs.pipeline.datamanager.next_train(0)
 
-        self.triggered = True
-        print(f"SemanticStageCallback: frozen FruitProposalField at step {step}")
+        # Snapshot model outputs (e.g. semantic labels, RGB)
+        outputs = model.get_outputs(ray_bundle)
+
+        torch.save({
+            "step": step,
+            "semantic_labels": outputs["semantic_labels"].cpu(),
+            "rgb": outputs["rgb"].cpu(),
+        }, self.save_path)
+
+        print(f"[FruitEarlyStop] step={step}: frozen & saved → {self.save_path}")

@@ -2,7 +2,7 @@
 Semantic dataset for handling images, masks, and binary images.
 """
 
-from typing import Dict, Literal
+from typing import Dict, Literal, Optional, Tuple, Type, Union
 from pathlib import Path
 from PIL import Image
 from torch import Tensor
