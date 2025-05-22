@@ -373,8 +373,8 @@ class FruitProposalModel(Model):
         fruit_proposal_weights_list = list(weights_list)
         nerfacto_weights_list       = list(weights_list)
 
-        fruit_proposal_weights_static = ray_samples.get_weights(      nerfacto_field_outputs[FieldHeadNames.DENSITY])
-        nerfacto_weights_static       = ray_samples.get_weights(fruit_proposal_field_outputs[FieldHeadNames.DENSITY])
+        nerfacto_weights_static       = ray_samples.get_weights(nerfacto_field_outputs[FieldHeadNames.DENSITY])
+        fruit_proposal_weights_static = ray_samples.get_weights(fruit_proposal_field_outputs[FieldHeadNames.DENSITY])
 
         fruit_proposal_weights_list.append(fruit_proposal_weights_static)
         nerfacto_weights_list.append(nerfacto_weights_static)
@@ -387,34 +387,29 @@ class FruitProposalModel(Model):
 
         fruit_proposal_expected_depth   = self.renderer_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
         nerfacto_expected_depth         = self.renderer_depth(weights=nerfacto_weights_static, ray_samples=ray_samples)
-
         nerfacto_accumulation   = self.renderer_accumulation(weights=nerfacto_weights_static)
         
-        outputs.update({"fruit_proposal_depth": fruit_proposal_depth})
-        outputs.update({"fruit_proposal_expected_depth": fruit_proposal_expected_depth})
-
-        outputs.update({"nerfacto_accumulation": nerfacto_accumulation})
-        outputs.update({"accumulation": nerfacto_accumulation})
-        outputs.update({"nerfacto_depth": nerfacto_depth})
-        outputs.update({"depth": nerfacto_depth})
-        outputs.update({"expected_depth": nerfacto_expected_depth})
-        outputs.update({"nerfacto_expected_depth": nerfacto_expected_depth})
-
 
         """
         Rendering the RGB and semantics
         """
+
         rgb = self.renderer_rgb(rgb=nerfacto_field_outputs[FieldHeadNames.RGB], weights=nerfacto_weights_static)
-        outputs.update({"rgb": rgb})
         semantics = self.renderer_semantics(
             fruit_proposal_field_outputs[FieldHeadNames.SEMANTICS],
             weights=fruit_proposal_weights_static
         )
         semantic_labels = torch.argmax(torch.nn.functional.softmax(semantics, dim=-1), dim=-1)
-        semantics_colormap = self.colormap.to(self.device)[semantic_labels]
-        outputs.update({"semantics": semantics})
-        outputs.update({"semantic_labels": semantic_labels})
-        outputs.update({"semantics_colormap": semantics_colormap})
+
+        outputs.update({"rgb": rgb,
+                        "accumulation": nerfacto_accumulation,
+                        "depth": nerfacto_depth,
+                        "expected_depth": nerfacto_expected_depth,
+                        "semantics": semantics,
+                        "semantic_labels": semantic_labels,
+                        "fruit_proposal_depth": fruit_proposal_depth,
+                        "fruit_proposal_expected_depth": fruit_proposal_expected_depth,
+                        })
 
         if self.training:
             outputs.update({"fruit_proposal_weights_list": fruit_proposal_weights_list,
@@ -540,10 +535,10 @@ class FruitProposalModel(Model):
         gt_rgb = batch["image"].to(self.device)
         predicted_rgb = outputs["rgb"]  # Blended with background (black if random background)
         gt_rgb = self.renderer_rgb.blend_background(gt_rgb)
-        acc = colormaps.apply_colormap(outputs["nerfacto_accumulation"])
+        acc = colormaps.apply_colormap(outputs["accumulation"])
         depth = colormaps.apply_depth_colormap(
-            outputs["nerfacto_depth"],
-            accumulation=outputs["nerfacto_accumulation"],
+            outputs["depth"],
+            accumulation=outputs["accumulation"],
         )
 
         combined_rgb = torch.cat([gt_rgb, predicted_rgb], dim=1)
@@ -563,34 +558,15 @@ class FruitProposalModel(Model):
         metrics_dict["lpips"] = float(lpips)
 
         images_dict = {"img": combined_rgb,
-                       "nerfacto_accumulation": combined_acc,
-                       "nerfacto_depth": combined_depth}
+                       "accumulation": combined_acc,
+                       "depth": combined_depth}
 
         for i in range(self.config.num_proposal_iterations):
             key = f"prop_depth_{i}"
             prop_depth_i = colormaps.apply_depth_colormap(
                 outputs[key],
-                accumulation=outputs["nerfacto_accumulation"],
+                accumulation=outputs["accumulation"],
             )
             images_dict[key] = prop_depth_i
-
-        """
-        FOR SEMANTICS
-        """
-        images_dict: Dict[str, torch.Tensor] = {}
-
-        # Colorize the predicted semantics
-        pred_logits = outputs["semantics"]                       # [B*H*W? or N_rays]
-        # If we can reshape back to (B,H,W,2), do so; else assume H=W=?? for display
-        # Here, we expect get_outputs produced [B,H,W,2]:
-        if pred_logits.ndim == 2:
-            # can't visualize per‐pixel grid if it's per‐ray only
-            return {}, {}
-        sem_logits = pred_logits                                 # [B,H,W,2]
-        pred_labels = sem_logits.argmax(dim=-1).cpu().numpy()    # [B,H,W]
-
-        # Apply a colormap for TensorBoard/viewer
-        sem_vis = colormaps.apply_colormap(pred_labels)          # [B,H,W,3] uint8
-        images_dict["semantics"] = sem_vis
 
         return metrics_dict, images_dict
