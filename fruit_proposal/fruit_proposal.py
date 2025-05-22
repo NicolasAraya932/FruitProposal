@@ -380,11 +380,6 @@ class FruitProposalModel(Model):
         nerfacto_weights_list.append(nerfacto_weights_static)
         ray_samples_list.append(ray_samples)
         
-        if self.training:
-            outputs.update({"fruit_proposal_weights_list": fruit_proposal_weights_list,
-                            "nerfacto_weights_list": nerfacto_weights_list,
-                            "ray_samples_list": ray_samples_list,
-                            })
 
         with torch.no_grad():
             fruit_proposal_depth   = self.renderer_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
@@ -421,24 +416,11 @@ class FruitProposalModel(Model):
         outputs.update({"semantic_labels": semantic_labels})
         outputs.update({"semantics_colormap": semantics_colormap})
 
-        """
-        NERFACTO FIELD HEADS
-        """
-        if self.config.predict_normals:
-            normals      = self.renderer_normals(normals=outputs[FieldHeadNames.NORMALS], weights=nerfacto_weights_static)
-            pred_normals = self.renderer_normals(normals=outputs[FieldHeadNames.PRED_NORMALS], weights=nerfacto_weights_static)
-            outputs["normals"] = self.normals_shader(normals)
-            outputs["pred_normals"] = self.normals_shader(pred_normals)
-
-        if self.training and self.config.predict_normals:
-            outputs["rendered_orientation_loss"] = orientation_loss(
-                nerfacto_weights_static.detach(), outputs[FieldHeadNames.NORMALS], ray_bundle.directions
-            )
-            outputs["rendered_pred_normal_loss"] = pred_normal_loss(
-                nerfacto_weights_static.detach(),
-                outputs[FieldHeadNames.NORMALS].detach(),
-                outputs[FieldHeadNames.PRED_NORMALS],
-            )
+        if self.training:
+            outputs.update({"fruit_proposal_weights_list": fruit_proposal_weights_list,
+                            "nerfacto_weights_list": nerfacto_weights_list,
+                            "ray_samples_list": ray_samples_list,
+                            })
 
         for i, (w_iter, rs_iter) in enumerate(zip(weights_list, ray_samples_list)):
             outputs[f"prop_depth_{i}"] = self.renderer_depth(weights=w_iter, ray_samples=rs_iter)
