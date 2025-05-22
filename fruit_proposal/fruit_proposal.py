@@ -341,17 +341,6 @@ class FruitProposalModel(Model):
                 )
             )
 
-        # fruit_cb = FruitEarlyStopCallback(stop_step=800, save_path="saved/fruit_nerfacto.pt")
-
-        # callbacks.append(
-        #     TrainingCallback(
-        #         where_to_run=[TrainingCallbackLocation.BEFORE_TRAIN_ITERATION],
-        #         update_every_num_iters=1,
-        #         func=fruit_cb,       # no extra args needed; Nerfstudio passes attrs, step
-        #         args=(training_callback_attributes,),
-        #     )
-        # )
-
         return callbacks
 
     def get_outputs(self, ray_bundle: RayBundle):
@@ -373,8 +362,7 @@ class FruitProposalModel(Model):
         """
         nerfacto_field_outputs = self.nerfacto_field.forward(ray_samples, compute_normals=self.config.predict_normals)
         fruit_proposal_field_outputs = self.fruit_proposal_field.forward(ray_samples, compute_normals=self.config.predict_normals)
-        outputs.update(nerfacto_field_outputs)
-        outputs.update(fruit_proposal_field_outputs)
+
         if self.config.use_gradient_scaling:
             nerfacto_field_outputs       = scale_gradients_by_distance_squared(nerfacto_field_outputs, ray_samples)
             fruit_proposal_field_outputs = scale_gradients_by_distance_squared(fruit_proposal_field_outputs, ray_samples)
@@ -382,8 +370,8 @@ class FruitProposalModel(Model):
         """
         Obtaining the density weights
         """
-        fruit_proposal_weights_list = weights_list
-        nerfacto_weights_list = weights_list
+        fruit_proposal_weights_list = list(weights_list)
+        nerfacto_weights_list       = list(weights_list)
 
         fruit_proposal_weights_static = ray_samples.get_weights(      nerfacto_field_outputs[FieldHeadNames.DENSITY])
         nerfacto_weights_static       = ray_samples.get_weights(fruit_proposal_field_outputs[FieldHeadNames.DENSITY])
@@ -392,9 +380,11 @@ class FruitProposalModel(Model):
         nerfacto_weights_list.append(nerfacto_weights_static)
         ray_samples_list.append(ray_samples)
         
-        outputs.update({"fruit_proposal_weights_list": fruit_proposal_weights_list})
-        outputs.update({"nerfacto_weights_list": nerfacto_weights_list})
-        outputs.update({"ray_samples_list": ray_samples_list})
+        if self.training:
+            outputs.update({"fruit_proposal_weights_list": fruit_proposal_weights_list,
+                            "nerfacto_weights_list": nerfacto_weights_list,
+                            "ray_samples_list": ray_samples_list,
+                            })
 
         with torch.no_grad():
             fruit_proposal_depth   = self.renderer_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
@@ -420,13 +410,13 @@ class FruitProposalModel(Model):
         Rendering the RGB and semantics
         """
         rgb = self.renderer_rgb(rgb=nerfacto_field_outputs[FieldHeadNames.RGB], weights=nerfacto_weights_static)
+        outputs.update({"rgb": rgb})
         semantics = self.renderer_semantics(
-            outputs[FieldHeadNames.SEMANTICS],
+            fruit_proposal_field_outputs[FieldHeadNames.SEMANTICS],
             weights=fruit_proposal_weights_static
         )
         semantic_labels = torch.argmax(torch.nn.functional.softmax(semantics, dim=-1), dim=-1)
         semantics_colormap = self.colormap.to(self.device)[semantic_labels]
-        outputs.update({"rgb": rgb})
         outputs.update({"semantics": semantics})
         outputs.update({"semantic_labels": semantic_labels})
         outputs.update({"semantics_colormap": semantics_colormap})
@@ -451,18 +441,7 @@ class FruitProposalModel(Model):
             )
 
         for i, (w_iter, rs_iter) in enumerate(zip(weights_list, ray_samples_list)):
-            outputs[f"prop_nerfacto_depth_{i}"] = self.renderer_depth(weights=w_iter, ray_samples=rs_iter)
-            outputs[f"prop_fruit_depth_{i}"]   = self.renderer_depth(weights=w_iter, ray_samples=rs_iter)
-
-        
-        # if self.to_save:
-        #     # Save the model outputs
-        #     torch.save({
-        #         "semantic_labels": outputs["semantic_labels"].cpu(),
-        #     }, "./fruit_nerfacto.pt")
-        #     CONSOLE.print(f"[FruitEarlyStop] step={self.step}: frozen & saved → saved/fruit_nerfacto.pt")
-        #     self.to_save = False
-
+            outputs[f"prop_depth_{i}"] = self.renderer_depth(weights=w_iter, ray_samples=rs_iter)
 
         return outputs
 
@@ -480,7 +459,7 @@ class FruitProposalModel(Model):
         image = batch["image"].to(self.device)
         pred_rgb, gt_rgb = self.renderer_rgb.blend_background_for_loss_computation(
             pred_image=outputs["rgb"],
-            pred_accumulation=outputs["nerfacto_accumulation"],
+            pred_accumulation=outputs["accumulation"],
             gt_image=image,
         )
 
@@ -491,16 +470,6 @@ class FruitProposalModel(Model):
             )
             assert metrics_dict is not None and "distortion" in metrics_dict
             loss_dict["distortion_loss"] = self.config.distortion_loss_mult * metrics_dict["distortion"]
-            if self.config.predict_normals:
-                # orientation loss for computed normals
-                loss_dict["orientation_loss"] = self.config.orientation_loss_mult * torch.mean(
-                    outputs["rendered_orientation_loss"]
-                )
-
-                # ground truth supervision for normals
-                loss_dict["pred_normal_loss"] = self.config.pred_normal_loss_mult * torch.mean(
-                    outputs["rendered_pred_normal_loss"]
-                )
             # Add loss from camera optimizer
             self.camera_optimizer.get_loss_dict(loss_dict)
         
