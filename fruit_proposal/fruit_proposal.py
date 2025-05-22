@@ -381,9 +381,8 @@ class FruitProposalModel(Model):
         ray_samples_list.append(ray_samples)
         
 
-        with torch.no_grad():
-            fruit_proposal_depth   = self.renderer_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
-            nerfacto_depth         = self.renderer_depth(weights=nerfacto_weights_static,       ray_samples=ray_samples)
+        fruit_proposal_depth   = self.renderer_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
+        nerfacto_depth         = self.renderer_depth(weights=nerfacto_weights_static,       ray_samples=ray_samples)
 
         fruit_proposal_expected_depth   = self.renderer_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
         nerfacto_expected_depth         = self.renderer_depth(weights=nerfacto_weights_static, ray_samples=ray_samples)
@@ -410,7 +409,7 @@ class FruitProposalModel(Model):
                         "fruit_proposal_depth": fruit_proposal_depth,
                         "fruit_proposal_expected_depth": fruit_proposal_expected_depth,
                         })
-
+        
         if self.training:
             outputs.update({"fruit_proposal_weights_list": fruit_proposal_weights_list,
                             "nerfacto_weights_list": nerfacto_weights_list,
@@ -439,8 +438,15 @@ class FruitProposalModel(Model):
             pred_accumulation=outputs["accumulation"],
             gt_image=image,
         )
+        print("===============PRED vs GT=================")
+        print(pred_rgb[-1], gt_rgb[-1])
+        print("================================")
 
         loss_dict["rgb_loss"] = self.rgb_loss(gt_rgb, pred_rgb)
+        print("==============RGB LOSS==================")
+        print(loss_dict["rgb_loss"])
+        print("================================")
+
         if self.training:
             loss_dict["interlevel_loss"] = self.config.interlevel_loss_mult * interlevel_loss(
                 outputs["nerfacto_weights_list"], outputs["ray_samples_list"]
@@ -473,8 +479,6 @@ class FruitProposalModel(Model):
 
         # Cross entropy loss
         loss_dict["semantic_loss"] = self.semantic_loss(pred_logits, gt_labels)
-
-        print(sum(outputs["semantic_labels"]), loss_dict["semantic_loss"], gt_sem)
 
         return loss_dict
 
