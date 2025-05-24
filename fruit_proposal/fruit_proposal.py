@@ -13,37 +13,27 @@
 # limitations under the License.
 
 """
-Semantic NeRF-W implementation which should be fast enough to view in the viewer.
+NeRF implementation that combines many recent advancements.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing      import (Dict, List, Tuple, Type, Literal, Optional)
+from typing import Dict, List, Literal, Tuple, Type
 
-import sys
 import numpy as np
 import torch
 from torch.nn import Parameter
 from torch.nn import CrossEntropyLoss
 
-from nerfstudio.cameras.rays              import RayBundle, RaySamples
 from nerfstudio.cameras.camera_optimizers import CameraOptimizer, CameraOptimizerConfig
-
-from nerfstudio.engine.callbacks import (
-    TrainingCallback,
-    TrainingCallbackAttributes,
-    TrainingCallbackLocation,
-)
-
-from fruit_proposal.callbacks.FruitProposalCallback import FruitEarlyStopCallback
-
-from nerfstudio.field_components.field_heads         import FieldHeadNames
+from nerfstudio.cameras.rays import RayBundle, RaySamples
+from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes, TrainingCallbackLocation
+from nerfstudio.field_components.field_heads import FieldHeadNames
 from nerfstudio.field_components.spatial_distortions import SceneContraction
-from nerfstudio.fields.density_fields                import HashMLPDensityField
-from nerfstudio.fields.nerfacto_field                import NerfactoField
-from fruit_proposal.fruit_proposal_field             import FruitProposalField
-
+from nerfstudio.fields.density_fields import HashMLPDensityField
+from nerfstudio.fields.nerfacto_field import NerfactoField
+from fruit_proposal.fruit_proposal_field import FruitProposalField
 from nerfstudio.model_components.losses import (
     MSELoss,
     distortion_loss,
@@ -53,20 +43,19 @@ from nerfstudio.model_components.losses import (
     scale_gradients_by_distance_squared,
 )
 from nerfstudio.model_components.ray_samplers import ProposalNetworkSampler, UniformSampler
-from nerfstudio.model_components.renderers    import (
+from nerfstudio.model_components.renderers import(
     AccumulationRenderer,
     DepthRenderer,
     NormalsRenderer,
     RGBRenderer,
     SemanticRenderer,
-)
-from nerfstudio.model_components.shaders         import NormalsShader
+    )
+
 from nerfstudio.model_components.scene_colliders import NearFarCollider
-from nerfstudio.models.base_model                import Model, ModelConfig
+from nerfstudio.model_components.shaders import NormalsShader
+from nerfstudio.models.base_model import Model, ModelConfig
+from nerfstudio.utils import colormaps
 
-from nerfstudio.utils                            import colormaps
-
-from nerfstudio.utils.rich_utils import CONSOLE
 
 @dataclass
 class FruitProposalModelConfig(ModelConfig):
@@ -77,7 +66,7 @@ class FruitProposalModelConfig(ModelConfig):
     """How far along the ray to start sampling."""
     far_plane: float = 1000.0
     """How far along the ray to stop sampling."""
-    background_color: Literal["random", "last_sample", "black", "white"] = "black"
+    background_color: Literal["random", "last_sample", "black", "white"] = "last_sample"
     """Whether to randomize the background color."""
     hidden_dim: int = 64
     """Dimension of hidden layers"""
@@ -89,16 +78,12 @@ class FruitProposalModelConfig(ModelConfig):
     """Number of levels of the hashmap for the base mlp."""
     base_res: int = 16
     """Resolution of the base grid for the hashgrid."""
-    max_res: int = 1024
+    max_res: int = 2048
     """Maximum resolution of the hashmap for the base mlp."""
     log2_hashmap_size: int = 19
     """Size of the hashmap for the base mlp"""
     features_per_level: int = 2
     """How many hashgrid features per level"""
-    num_semantic_classes: int = 2
-    """Number of semantic classes."""
-    num_nerf_samples_per_ray: int = 48
-    """Number of samples per ray for the nerf network."""
     num_proposal_samples_per_ray: Tuple[int, ...] = (256, 96)
     """Number of samples per ray for each proposal network."""
     num_nerf_samples_per_ray: int = 48
@@ -155,12 +140,15 @@ class FruitProposalModelConfig(ModelConfig):
     camera_optimizer: CameraOptimizerConfig = field(default_factory=lambda: CameraOptimizerConfig(mode="SO3xR3"))
     """Config of the camera optimizer to use"""
 
+
 class FruitProposalModel(Model):
-    """Semantic NeRF model for binary semantics and density."""
+    """Nerfacto model
+
+    Args:
+        config: Nerfacto configuration to instantiate model
+    """
 
     config: FruitProposalModelConfig
-    to_save: bool = False
-    last_semantic_labels: Dict = None
 
     def populate_modules(self):
         """Set the fields and modules."""
@@ -171,25 +159,10 @@ class FruitProposalModel(Model):
         else:
             scene_contraction = SceneContraction(order=float("inf"))
 
-        """
-        FRUIT PROPOSAL FIELD
-        """
-        self.fruit_proposal_field = FruitProposalField(
-            aabb = self.scene_box.aabb,
-            num_levels = self.config.num_levels,
-            base_res = self.config.base_res,
-            max_res = self.config.max_res,
-            num_images=self.num_train_data,
-            log2_hashmap_size = self.config.log2_hashmap_size,
-            features_per_level = self.config.features_per_level,
-            average_init_density = self.config.average_init_density,
-            implementation = self.config.implementation
-        )
+        appearance_embedding_dim = self.config.appearance_embed_dim if self.config.use_appearance_embedding else 0
 
-        """
-        NERFACTO FIELD
-        """
-        self.nerfacto_field = NerfactoField(
+        # Fields
+        self.field = FruitProposalField(
             self.scene_box.aabb,
             hidden_dim=self.config.hidden_dim,
             num_levels=self.config.num_levels,
@@ -198,9 +171,13 @@ class FruitProposalModel(Model):
             features_per_level=self.config.features_per_level,
             log2_hashmap_size=self.config.log2_hashmap_size,
             hidden_dim_color=self.config.hidden_dim_color,
+            hidden_dim_transient=self.config.hidden_dim_transient,
             spatial_distortion=scene_contraction,
             num_images=self.num_train_data,
-            average_init_density = self.config.average_init_density,
+            use_pred_normals=self.config.predict_normals,
+            use_average_appearance_embedding=self.config.use_average_appearance_embedding,
+            appearance_embedding_dim=appearance_embedding_dim,
+            average_init_density=self.config.average_init_density,
             implementation=self.config.implementation,
         )
 
@@ -238,8 +215,6 @@ class FruitProposalModel(Model):
 
         # Samplers
         def update_schedule(step):
-            if self.step >= 800 and self.step < 810:
-                self.to_save = True
             return np.clip(
                 np.interp(step, [0, self.config.proposal_warmup], [0, self.config.proposal_update_every]),
                 1,
@@ -261,26 +236,22 @@ class FruitProposalModel(Model):
         )
 
         # Collider
-        self.collider  = NearFarCollider(
-            near_plane = self.config.near_plane,
-            far_plane  = self.config.far_plane,
-        ) 
-        
-        # Renderers
+        self.collider = NearFarCollider(near_plane=self.config.near_plane, far_plane=self.config.far_plane)
+
+        # renderers
         self.renderer_semantics      = SemanticRenderer()
         self.renderer_rgb            = RGBRenderer(background_color=self.config.background_color)
         self.renderer_accumulation   = AccumulationRenderer()
-        self.renderer_depth          = DepthRenderer()
+        self.renderer_depth          = DepthRenderer(method="median")
         self.renderer_expected_depth = DepthRenderer(method="expected")
         self.renderer_normals        = NormalsRenderer()
 
         # shaders
         self.normals_shader = NormalsShader()
 
-        # Losses
-        self.rgb_loss        = MSELoss()
-        self.semantic_loss   = CrossEntropyLoss() # Default reduction="mean")
-        self.interlevel_loss = interlevel_loss
+        # losses
+        self.rgb_loss      = MSELoss()
+        self.semantic_loss = CrossEntropyLoss()
         self.step = 0
 
         # metrics
@@ -293,33 +264,33 @@ class FruitProposalModel(Model):
         self.lpips = LearnedPerceptualImagePatchSimilarity(normalize=True)
         self.step = 0
 
-    def get_param_groups(self):
+    def get_param_groups(self) -> Dict[str, List[Parameter]]:
         param_groups = {}
-        param_groups["proposal_networks"]       = list(self.proposal_networks.parameters())
-        param_groups["nerfacto_fields"]         = list(self.nerfacto_field.parameters())
-        param_groups["fruit_proposal_fields"]   = list(self.fruit_proposal_field.parameters())
+        param_groups["proposal_networks"] = list(self.proposal_networks.parameters())
+        param_groups["fields"] = list(self.field.parameters())
         self.camera_optimizer.get_param_groups(param_groups=param_groups)
         return param_groups
-
 
     def get_training_callbacks(
         self, training_callback_attributes: TrainingCallbackAttributes
     ) -> List[TrainingCallback]:
-        callbacks = super().get_training_callbacks(training_callback_attributes)
+        callbacks = []
         if self.config.use_proposal_weight_anneal:
+            # anneal the weights of the proposal network before doing PDF sampling
             N = self.config.proposal_weights_anneal_max_num_iters
-    
+
             def set_anneal(step):
+                # https://arxiv.org/pdf/2111.12077.pdf eq. 18
                 self.step = step
                 train_frac = np.clip(step / N, 0, 1)
                 self.step = step
-    
+
                 def bias(x, b):
                     return b * x / ((b - 1) * x + 1)
-    
+
                 anneal = bias(train_frac, self.config.proposal_weights_anneal_slope)
                 self.proposal_sampler.set_anneal(anneal)
-    
+
             callbacks.append(
                 TrainingCallback(
                     where_to_run=[TrainingCallbackLocation.BEFORE_TRAIN_ITERATION],
@@ -334,130 +305,108 @@ class FruitProposalModel(Model):
                     func=self.proposal_sampler.step_cb,
                 )
             )
-
         return callbacks
 
     def get_outputs(self, ray_bundle: RayBundle):
-        """Compute outputs for semantics only."""
-        outputs = {}
-
+        # apply the camera optimizer pose tweaks
         if self.training:
             self.camera_optimizer.apply_to_raybundle(ray_bundle)
-
-        """
-        Sample points along rays using the proposal sampler.
-        """
         ray_samples: RaySamples
         ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
-
-
-        """
-        Compute fields outputs
-        """
-        nerfacto_field_outputs = self.nerfacto_field.forward(ray_samples)
-        fruit_proposal_field_outputs = self.fruit_proposal_field.forward(ray_samples)
-
+        field_outputs = self.field.forward(ray_samples, compute_normals=self.config.predict_normals)
         if self.config.use_gradient_scaling:
-            nerfacto_field_outputs       = scale_gradients_by_distance_squared(nerfacto_field_outputs, ray_samples)
-            fruit_proposal_field_outputs = scale_gradients_by_distance_squared(fruit_proposal_field_outputs, ray_samples)
+            field_outputs = scale_gradients_by_distance_squared(field_outputs, ray_samples)
 
-        """
-        Obtaining the density weights
-        """
-        nerfacto_density  = torch.clamp(nerfacto_field_outputs[FieldHeadNames.DENSITY], 0.0, 100.0)
-        fruit_proposal_density = torch.clamp(fruit_proposal_field_outputs[FieldHeadNames.DENSITY], 0.0, 100.0)
-
-        print("==============DENSITY===================")
-        print(f"nerfacto_density: {nerfacto_density[-1]}")
-        print(f"fruit_proposal_density: {fruit_proposal_density[-1]}")
-
-        nerfacto_weights_static       = ray_samples.get_weights(nerfacto_density)
-        fruit_proposal_weights_static = ray_samples.get_weights(fruit_proposal_density)
-
-        nerfacto_weights_list       = list(weights_list) + [nerfacto_weights_static]
-        fruit_proposal_weights_list = list(weights_list) + [fruit_proposal_weights_static]
+        weights = ray_samples.get_weights(field_outputs[FieldHeadNames.DENSITY])
+        weights_list.append(weights)
         ray_samples_list.append(ray_samples)
 
 
-        fruit_proposal_depth   = self.renderer_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
-        nerfacto_depth         = self.renderer_depth(weights=nerfacto_weights_static,       ray_samples=ray_samples)
-
-        print("==============DEPTH===================")
-        print(f"fruit_proposal_depth: {fruit_proposal_depth[-1]}")
-        print(f"nerfacto_depth: {nerfacto_depth[-1]}")
-
-        fruit_proposal_expected_depth   = self.renderer_expected_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
-        nerfacto_expected_depth         = self.renderer_expected_depth(weights=nerfacto_weights_static, ray_samples=ray_samples)
-        nerfacto_accumulation   = self.renderer_accumulation(weights=nerfacto_weights_static)
-        
-
-        """
-        Rendering the RGB and semantics
-        """
-
-        rgb = self.renderer_rgb(rgb=nerfacto_field_outputs[FieldHeadNames.RGB], weights=nerfacto_weights_static)
+        rgb = self.renderer_rgb(rgb=field_outputs[FieldHeadNames.RGB], weights=weights)
         semantics = self.renderer_semantics(
-            fruit_proposal_field_outputs[FieldHeadNames.SEMANTICS],
-            weights=fruit_proposal_weights_static
+            field_outputs[FieldHeadNames.SEMANTICS],
+            weights=weights,
         )
         semantic_labels = torch.argmax(torch.nn.functional.softmax(semantics, dim=-1), dim=-1)
-
-        outputs.update({"rgb": rgb,
-                        "accumulation": nerfacto_accumulation,
-                        "depth": nerfacto_depth,
-                        "expected_depth": nerfacto_expected_depth,
-                        "semantics": semantics,
-                        "semantic_labels": semantic_labels,
-                        "fruit_proposal_depth": fruit_proposal_depth,
-                        "fruit_proposal_expected_depth": fruit_proposal_expected_depth,
-                        })
+        with torch.no_grad():
+            depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
         
+        expected_depth = self.renderer_expected_depth(weights=weights, ray_samples=ray_samples)
+        accumulation = self.renderer_accumulation(weights=weights)
+
+        outputs = {
+            "rgb": rgb,
+            "accumulation": accumulation,
+            "depth": depth,
+            "expected_depth": expected_depth,
+            "semantics": semantics,
+            "semantic_labels": semantic_labels,
+        }
+
+        if self.config.predict_normals:
+            normals = self.renderer_normals(normals=field_outputs[FieldHeadNames.NORMALS], weights=weights)
+            pred_normals = self.renderer_normals(field_outputs[FieldHeadNames.PRED_NORMALS], weights=weights)
+            outputs["normals"] = self.normals_shader(normals)
+            outputs["pred_normals"] = self.normals_shader(pred_normals)
+        # These use a lot of GPU memory, so we avoid storing them for eval.
         if self.training:
-            outputs.update({"fruit_proposal_weights_list": fruit_proposal_weights_list,
-                            "nerfacto_weights_list": nerfacto_weights_list,
-                            "ray_samples_list": ray_samples_list,
-                            })
+            outputs["weights_list"] = weights_list
+            outputs["ray_samples_list"] = ray_samples_list
 
-        for i, (w_iter, rs_iter) in enumerate(zip(weights_list, ray_samples_list)):
-            outputs[f"prop_depth_{i}"] = self.renderer_depth(weights=w_iter, ray_samples=rs_iter)
+        if self.training and self.config.predict_normals:
+            outputs["rendered_orientation_loss"] = orientation_loss(
+                weights.detach(), field_outputs[FieldHeadNames.NORMALS], ray_bundle.directions
+            )
 
+            outputs["rendered_pred_normal_loss"] = pred_normal_loss(
+                weights.detach(),
+                field_outputs[FieldHeadNames.NORMALS].detach(),
+                field_outputs[FieldHeadNames.PRED_NORMALS],
+            )
+
+        for i in range(self.config.num_proposal_iterations):
+            outputs[f"prop_depth_{i}"] = self.renderer_depth(weights=weights_list[i], ray_samples=ray_samples_list[i])
         return outputs
 
+    def get_metrics_dict(self, outputs, batch):
+        metrics_dict = {}
+        gt_rgb = batch["image"].to(self.device)  # RGB or RGBA image
+        gt_rgb = self.renderer_rgb.blend_background(gt_rgb)  # Blend if RGBA
+        predicted_rgb = outputs["rgb"]
+        metrics_dict["psnr"] = self.psnr(predicted_rgb, gt_rgb)
+
+        if self.training:
+            metrics_dict["distortion"] = distortion_loss(outputs["weights_list"], outputs["ray_samples_list"])
+
+        """
+        FOR SEMANTICS
+        """
+        pred_logits = outputs["semantics"]  # [N_rays, num_classes]
+        pred_logits = torch.clamp(pred_logits, min=-3.8, max=7)
+        N_rays = pred_logits.shape[0]
+        rgb_values = batch["binary_img"][:,:3].to(self.device)
+        summed_rgb = rgb_values.sum(dim=-1)
+        gt_sem = (summed_rgb != 0).long()
+        assert torch.all((gt_sem == 0) | (gt_sem == 1)), "Ground truth cannot be interpreted as binary img"
+        ray_indices = batch.get("ray_indices", torch.arange(N_rays, device=self.device))
+        gt_labels = gt_sem[ray_indices]  # [N_rays]
+        pred_labels = torch.argmax(torch.nn.functional.softmax(pred_logits, dim=-1), dim=-1) # [N_rays]
+        metrics_dict["semantic_accuracy"] =  (pred_labels == gt_labels).float().mean()
+        metrics_dict["semantic_psnr"] = self.psnr(pred_labels, gt_labels)
+
+        self.camera_optimizer.get_metrics_dict(metrics_dict)
+        return metrics_dict
 
     def get_loss_dict(self, outputs, batch, metrics_dict=None):
-        """
-        Compute the loss for the model.
-        """
-
         loss_dict = {}
-
-        """
-        FOR RGB
-        """
         image = batch["image"].to(self.device)
         pred_rgb, gt_rgb = self.renderer_rgb.blend_background_for_loss_computation(
             pred_image=outputs["rgb"],
             pred_accumulation=outputs["accumulation"],
             gt_image=image,
         )
-        print("===============PRED vs GT=================")
-        print(pred_rgb[-1], gt_rgb[-1], image[-1])
-        print("================================")
 
         loss_dict["rgb_loss"] = self.rgb_loss(gt_rgb, pred_rgb)
-        print("==============RGB LOSS==================")
-        print(loss_dict["rgb_loss"])
-        print("================================")
-
-        if self.training:
-            loss_dict["interlevel_loss"] = self.config.interlevel_loss_mult * interlevel_loss(
-                outputs["nerfacto_weights_list"], outputs["ray_samples_list"]
-            )
-            assert metrics_dict is not None and "distortion" in metrics_dict
-            loss_dict["distortion_loss"] = self.config.distortion_loss_mult * metrics_dict["distortion"]
-            # Add loss from camera optimizer
-            self.camera_optimizer.get_loss_dict(loss_dict)
-        
         """
         FOR SEMANTICS
         """
@@ -465,82 +414,39 @@ class FruitProposalModel(Model):
         # Predictions
         pred_logits = outputs["semantics"]  # [N_rays, num_classes]
         pred_logits = torch.clamp(pred_logits, min=-3.8, max=7)
-
-        # Convert summed_rgb to binary: 1 if non-zero, 0 otherwise
         binary_values = batch["binary_img"][:,:3].to(self.device)
-        print("==============BINARY VALUES=================")
-        print(binary_values[-1])
-
         summed_rgb = binary_values.sum(dim=-1)
-        binary_img = (summed_rgb != 0).long()
-
-        assert torch.all((binary_img == 0) | (binary_img == 1)), "Ground truth cannot be interpreted as binary img"
-        gt_sem = binary_img
-
-        # Get ray_indices (if available)
+        gt_sem = (summed_rgb != 0).long()
+        assert torch.all((gt_sem == 0) | (gt_sem == 1)), "Ground truth cannot be interpreted as binary img"
         N_rays = pred_logits.shape[0]
         ray_indices = batch.get("ray_indices", torch.arange(N_rays, device=self.device))
         gt_labels = gt_sem[ray_indices]  # [N_rays]
 
         # Cross entropy loss
         loss_dict["semantic_loss"] = self.semantic_loss(pred_logits, gt_labels)
-
-        return loss_dict
-
-
-    def get_metrics_dict(self, outputs, batch):
-        metrics_dict = {}
-
-        """
-        FOR RGB
-        """
-        gt_rgb = batch["image"].to(self.device)  # RGB or RGBA image
-        gt_rgb = self.renderer_rgb.blend_background(gt_rgb)  # Blend if RGBA
-        predicted_rgb = outputs["rgb"]
-        metrics_dict.update({"rgb_psnr": self.psnr(predicted_rgb, gt_rgb)})
-
         if self.training:
-            metrics_dict.update({
-                "distortion":distortion_loss(outputs["nerfacto_weights_list"], outputs["ray_samples_list"])
-                })
+            loss_dict["interlevel_loss"] = self.config.interlevel_loss_mult * interlevel_loss(
+                outputs["weights_list"], outputs["ray_samples_list"]
+            )
+            assert metrics_dict is not None and "distortion" in metrics_dict
+            loss_dict["distortion_loss"] = self.config.distortion_loss_mult * metrics_dict["distortion"]
+            if self.config.predict_normals:
+                # orientation loss for computed normals
+                loss_dict["orientation_loss"] = self.config.orientation_loss_mult * torch.mean(
+                    outputs["rendered_orientation_loss"]
+                )
 
-        self.camera_optimizer.get_metrics_dict(metrics_dict)
-
-        """
-        FOR SEMANTICS
-        """
-        pred_logits = outputs["semantics"]  # [N_rays, num_classes]
-        pred_logits = torch.clamp(pred_logits, min=-3.8, max=7)
-        N_rays = pred_logits.shape[0]
-
-        rgb_values = batch["binary_img"][:,:3].to(self.device)
-        summed_rgb = rgb_values.sum(dim=-1)
-
-        # Convert summed_rgb to binary: 1 if non-zero, 0 otherwise
-        binary_img= (summed_rgb != 0).long()
-        assert torch.all((binary_img == 0) | (binary_img == 1)), "Ground truth cannot be interpreted as binary img"
-        gt_sem = binary_img
-
-        # Get ray_indices (if available)
-        ray_indices = batch.get("ray_indices", torch.arange(N_rays, device=self.device))
-
-        gt_labels = gt_sem[ray_indices]  # [N_rays]
-
-        # Predictions
-        pred_labels = torch.argmax(torch.nn.functional.softmax(pred_logits, dim=-1), dim=-1) # [N_rays]
-        
-        metrics_dict.update({"semantic_accuracy": (pred_labels == gt_labels).float().mean()})
-        metrics_dict.update({"semantic_psnr": self.psnr(pred_labels, gt_labels)})
-
-        return metrics_dict
-
+                # ground truth supervision for normals
+                loss_dict["pred_normal_loss"] = self.config.pred_normal_loss_mult * torch.mean(
+                    outputs["rendered_pred_normal_loss"]
+                )
+            # Add loss from camera optimizer
+            self.camera_optimizer.get_loss_dict(loss_dict)
+        return loss_dict
 
     def get_image_metrics_and_images(
         self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]
     ) -> Tuple[Dict[str, float], Dict[str, torch.Tensor]]:
-        """
-        FOR RGB
-        """
         gt_rgb = batch["image"].to(self.device)
         predicted_rgb = outputs["rgb"]  # Blended with background (black if random background)
         gt_rgb = self.renderer_rgb.blend_background(gt_rgb)
@@ -566,9 +472,7 @@ class FruitProposalModel(Model):
         metrics_dict = {"psnr": float(psnr.item()), "ssim": float(ssim)}  # type: ignore
         metrics_dict["lpips"] = float(lpips)
 
-        images_dict = {"img": combined_rgb,
-                       "accumulation": combined_acc,
-                       "depth": combined_depth}
+        images_dict = {"img": combined_rgb, "accumulation": combined_acc, "depth": combined_depth}
 
         for i in range(self.config.num_proposal_iterations):
             key = f"prop_depth_{i}"
