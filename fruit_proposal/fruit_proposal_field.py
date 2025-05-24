@@ -104,6 +104,17 @@ class FruitProposalField(Field):
             implementation=implementation,
         )
 
+        # RGB MLP for color processing
+        self.mlp_rgb = MLP(
+            in_dim=self.direction_encoding.get_out_dim() + self.geo_feat_dim + self.appearance_embedding_dim,
+            num_layers=num_layers_color,
+            layer_width=hidden_dim_color,
+            out_dim=3,
+            activation=nn.ReLU(),
+            out_activation=nn.Sigmoid(),
+            implementation=implementation,
+        )
+
         # Semantic MLP for semantic logits
         self.mlp_semantic = MLP(
             in_dim=geo_feat_dim,

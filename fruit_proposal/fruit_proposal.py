@@ -200,6 +200,7 @@ class FruitProposalModel(Model):
             hidden_dim_color=self.config.hidden_dim_color,
             spatial_distortion=scene_contraction,
             num_images=self.num_train_data,
+            average_init_density = self.config.average_init_density,
             implementation=self.config.implementation,
         )
 
@@ -365,6 +366,10 @@ class FruitProposalModel(Model):
         """
         nerfacto_density  = torch.clamp(nerfacto_field_outputs[FieldHeadNames.DENSITY], 0.0, 100.0)
         fruit_proposal_density = torch.clamp(fruit_proposal_field_outputs[FieldHeadNames.DENSITY], 0.0, 100.0)
+
+        print("==============DENSITY===================")
+        print(f"nerfacto_density: {nerfacto_density[-1]}")
+        print(f"fruit_proposal_density: {fruit_proposal_density[-1]}")
 
         nerfacto_weights_static       = ray_samples.get_weights(nerfacto_density)
         fruit_proposal_weights_static = ray_samples.get_weights(fruit_proposal_density)
