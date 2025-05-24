@@ -77,7 +77,7 @@ class FruitProposalModelConfig(ModelConfig):
     """How far along the ray to start sampling."""
     far_plane: float = 1000.0
     """How far along the ray to stop sampling."""
-    background_color: Literal["random", "last_sample", "black", "white"] = "last_sample"
+    background_color: Literal["random", "last_sample", "black", "white"] = "black"
     """Whether to randomize the background color."""
     hidden_dim: int = 64
     """Dimension of hidden layers"""
@@ -353,8 +353,8 @@ class FruitProposalModel(Model):
         """
         Compute fields outputs
         """
-        nerfacto_field_outputs = self.nerfacto_field.forward(ray_samples, compute_normals=self.config.predict_normals)
-        fruit_proposal_field_outputs = self.fruit_proposal_field.forward(ray_samples, compute_normals=self.config.predict_normals)
+        nerfacto_field_outputs = self.nerfacto_field.forward(ray_samples)
+        fruit_proposal_field_outputs = self.fruit_proposal_field.forward(ray_samples)
 
         if self.config.use_gradient_scaling:
             nerfacto_field_outputs       = scale_gradients_by_distance_squared(nerfacto_field_outputs, ray_samples)
@@ -363,24 +363,26 @@ class FruitProposalModel(Model):
         """
         Obtaining the density weights
         """
-        fruit_proposal_weights_list = list(weights_list)
-        nerfacto_weights_list       = list(weights_list)
-        fruit_ray_samples           = list(ray_samples)
-        nerfacto_ray_samples        = list(ray_samples)
+        nerfacto_density  = torch.clamp(nerfacto_field_outputs[FieldHeadNames.DENSITY], 0.0, 100.0)
+        fruit_proposal_density = torch.clamp(fruit_proposal_field_outputs[FieldHeadNames.DENSITY], 0.0, 100.0)
 
-        nerfacto_weights_static       = nerfacto_ray_samples.get_weights(nerfacto_field_outputs[FieldHeadNames.DENSITY])
-        fruit_proposal_weights_static = fruit_ray_samples.get_weights(fruit_proposal_field_outputs[FieldHeadNames.DENSITY])
+        nerfacto_weights_static       = ray_samples.get_weights(nerfacto_density)
+        fruit_proposal_weights_static = ray_samples.get_weights(fruit_proposal_density)
 
-        fruit_proposal_weights_list.append(fruit_proposal_weights_static)
-        nerfacto_weights_list.append(nerfacto_weights_static)
+        nerfacto_weights_list       = list(weights_list) + [nerfacto_weights_static]
+        fruit_proposal_weights_list = list(weights_list) + [fruit_proposal_weights_static]
         ray_samples_list.append(ray_samples)
-        
+
 
         fruit_proposal_depth   = self.renderer_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
         nerfacto_depth         = self.renderer_depth(weights=nerfacto_weights_static,       ray_samples=ray_samples)
 
-        fruit_proposal_expected_depth   = self.renderer_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
-        nerfacto_expected_depth         = self.renderer_depth(weights=nerfacto_weights_static, ray_samples=ray_samples)
+        print("==============DEPTH===================")
+        print(f"fruit_proposal_depth: {fruit_proposal_depth[-1]}")
+        print(f"nerfacto_depth: {nerfacto_depth[-1]}")
+
+        fruit_proposal_expected_depth   = self.renderer_expected_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
+        nerfacto_expected_depth         = self.renderer_expected_depth(weights=nerfacto_weights_static, ray_samples=ray_samples)
         nerfacto_accumulation   = self.renderer_accumulation(weights=nerfacto_weights_static)
         
 
@@ -434,7 +436,7 @@ class FruitProposalModel(Model):
             gt_image=image,
         )
         print("===============PRED vs GT=================")
-        print(pred_rgb[-1], gt_rgb[-1])
+        print(pred_rgb[-1], gt_rgb[-1], image[-1])
         print("================================")
 
         loss_dict["rgb_loss"] = self.rgb_loss(gt_rgb, pred_rgb)
@@ -461,6 +463,9 @@ class FruitProposalModel(Model):
 
         # Convert summed_rgb to binary: 1 if non-zero, 0 otherwise
         binary_values = batch["binary_img"][:,:3].to(self.device)
+        print("==============BINARY VALUES=================")
+        print(binary_values[-1])
+
         summed_rgb = binary_values.sum(dim=-1)
         binary_img = (summed_rgb != 0).long()
 
