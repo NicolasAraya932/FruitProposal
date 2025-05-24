@@ -172,7 +172,7 @@ class FruitProposalModel(Model):
             scene_contraction = SceneContraction(order=float("inf"))
 
         """
-        SEMANTIC PROPOSAL FIELD
+        FRUIT PROPOSAL FIELD
         """
         self.fruit_proposal_field = FruitProposalField(
             aabb = self.scene_box.aabb,
@@ -292,13 +292,6 @@ class FruitProposalModel(Model):
         self.lpips = LearnedPerceptualImagePatchSimilarity(normalize=True)
         self.step = 0
 
-        """TODO TO DEFINE IF IT'S STILL NEEDED"""
-        import matplotlib.pyplot as plt
-        
-        # Initialize colormap using matplotlib
-        cmap = plt.get_cmap("viridis", self.config.num_semantic_classes)
-        self.colormap = torch.tensor(cmap.colors, dtype=torch.float32)
-
     def get_param_groups(self):
         param_groups = {}
         param_groups["proposal_networks"]       = list(self.proposal_networks.parameters())
@@ -372,9 +365,11 @@ class FruitProposalModel(Model):
         """
         fruit_proposal_weights_list = list(weights_list)
         nerfacto_weights_list       = list(weights_list)
+        fruit_ray_samples           = list(ray_samples)
+        nerfacto_ray_samples        = list(ray_samples)
 
-        nerfacto_weights_static       = ray_samples.get_weights(nerfacto_field_outputs[FieldHeadNames.DENSITY])
-        fruit_proposal_weights_static = ray_samples.get_weights(fruit_proposal_field_outputs[FieldHeadNames.DENSITY])
+        nerfacto_weights_static       = nerfacto_ray_samples.get_weights(nerfacto_field_outputs[FieldHeadNames.DENSITY])
+        fruit_proposal_weights_static = fruit_ray_samples.get_weights(fruit_proposal_field_outputs[FieldHeadNames.DENSITY])
 
         fruit_proposal_weights_list.append(fruit_proposal_weights_static)
         nerfacto_weights_list.append(nerfacto_weights_static)
