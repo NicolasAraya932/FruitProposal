@@ -38,6 +38,7 @@ from nerfstudio.cameras.cameras import Cameras, CameraType
 from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.configs.base_config import InstantiateConfig
 from nerfstudio.configs.dataparser_configs import AnnotatedDataParserUnion
+from fruit_proposal.data.fruit_proposal_dataparser import FruitProposalDataParser
 from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs
 
 from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManagerConfig
@@ -68,7 +69,7 @@ class FruitDataManagerConfig(DataManagerConfig):
 
     _target: Type = field(default_factory=lambda: FruitDataManager)
     """Target class to instantiate."""
-    dataparser: AnnotatedDataParserUnion = field(default_factory=FruitProposalDataParserConfig)
+    dataparser: FruitProposalDataParserConfig = field(default_factory=FruitProposalDataParserConfig)
     """Specifies the dataparser used to unpack the data."""
     train_num_rays_per_batch: int = 1024
     """Number of rays per batch to use per training iteration."""
@@ -111,10 +112,7 @@ class FruitDataManagerConfig(DataManagerConfig):
             )
             warnings.warn("above message coming from", FutureWarning, stacklevel=3)
 
-
-TDataset = TypeVar("TDataset", bound=InputDataset, default=InputDataset)
-
-class FruitDataManager(DataManager, Generic[TDataset]):
+class FruitDataManager(DataManager):
     """Basic stored data manager implementation.
 
     This is pretty much a port over from our old dataloading utilities, and is a little jank
@@ -128,8 +126,8 @@ class FruitDataManager(DataManager, Generic[TDataset]):
     """
 
     config: FruitDataManagerConfig
-    train_dataset: TDataset
-    eval_dataset: TDataset
+    train_dataset: FruitProposalDataset
+    eval_dataset: FruitProposalDataset
     train_dataparser_outputs: FruitProposalDataParserOutputs
     train_pixel_sampler: Optional[PixelSampler] = None
     eval_pixel_sampler: Optional[PixelSampler] = None
@@ -181,46 +179,21 @@ class FruitDataManager(DataManager, Generic[TDataset]):
                         break
         super().__init__()
 
-    @cached_property
-    def dataset_type(self) -> Type[TDataset]:
-        """Returns the dataset type passed as the generic argument"""
-        default: Type[TDataset] = cast(TDataset, TDataset.__default__)  # type: ignore
-        orig_class: Type[VanillaDataManager] = get_orig_class(self, default=None)  # type: ignore
-        if type(self) is VanillaDataManager and orig_class is None:
-            return default
-        if orig_class is not None and get_origin(orig_class) is VanillaDataManager:
-            return get_args(orig_class)[0]
-
-        # For inherited classes, we need to find the correct type to instantiate
-        for base in getattr(self, "__orig_bases__", []):
-            if get_origin(base) is VanillaDataManager:
-                for value in get_args(base):
-                    if isinstance(value, ForwardRef):
-                        if value.__forward_evaluated__:
-                            value = value.__forward_value__
-                        elif value.__forward_module__ is None:
-                            value.__forward_module__ = type(self).__module__
-                            value = getattr(value, "_evaluate")(None, None, set())
-                    assert isinstance(value, type)
-                    if issubclass(value, InputDataset):
-                        return cast(Type[TDataset], value)
-        return default
-
-    def create_train_dataset(self) -> TDataset:
+    def create_train_dataset(self) -> FruitProposalDataset:
         """Sets up the data loaders for training"""
-        return self.FruitProposalDataset(
+        return FruitProposalDataset(
             dataparser_outputs=self.train_dataparser_outputs,
             scale_factor=self.config.camera_res_scale_factor,
         )
 
-    def create_eval_dataset(self) -> TDataset:
+    def create_eval_dataset(self) -> FruitProposalDataset:
         """Sets up the data loaders for evaluation"""
-        return self.FruitProposalDataset(
+        return FruitProposalDataset(
             dataparser_outputs=self.dataparser.get_dataparser_outputs(split=self.test_split),
             scale_factor=self.config.camera_res_scale_factor,
         )
 
-    def _get_pixel_sampler(self, dataset: TDataset, num_rays_per_batch: int) -> PixelSampler:
+    def _get_pixel_sampler(self, dataset: FruitProposalDataset, num_rays_per_batch: int) -> PixelSampler:
         """Infer pixel sampler to use."""
         if self.config.patch_size > 1 and type(self.config.pixel_sampler) is PixelSamplerConfig:
             return PatchPixelSamplerConfig().setup(

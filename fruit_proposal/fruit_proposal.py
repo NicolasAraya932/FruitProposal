@@ -342,6 +342,8 @@ class FruitProposalModel(Model):
             "semantics": semantics,
             "semantic_labels": semantic_labels,
         }
+        if self.step%10 == 0:
+            print("semantic_labels", semantic_labels.shape, semantic_labels[:10], sum(semantic_labels))
 
         if self.config.predict_normals:
             normals = self.renderer_normals(normals=field_outputs[FieldHeadNames.NORMALS], weights=weights)
