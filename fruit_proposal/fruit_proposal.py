@@ -328,6 +328,10 @@ class FruitProposalModel(Model):
             weights=weights,
         )
         semantic_labels = torch.argmax(torch.nn.functional.softmax(semantics, dim=-1), dim=-1)
+        if self.step%10==0:
+            print("semantics", semantics.shape, semantics[:10])
+            print("semantic_labels", semantic_labels.shape, semantic_labels[:10], sum(semantic_labels))
+
         with torch.no_grad():
             depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
         
