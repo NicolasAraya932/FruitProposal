@@ -89,7 +89,7 @@ class FruitProposalField(Field):
         transient_embedding_dim: int = 16,
         use_transient_embedding: bool = False,
         use_semantics: bool = False,
-        num_semantic_classes: int = 100,
+        num_semantic_classes: int = 2,
         pass_semantic_gradients: bool = False,
         use_pred_normals: bool = False,
         use_average_appearance_embedding: bool = False,
