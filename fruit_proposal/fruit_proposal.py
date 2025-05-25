@@ -55,7 +55,13 @@ from nerfstudio.model_components.scene_colliders import NearFarCollider
 from nerfstudio.model_components.shaders import NormalsShader
 from nerfstudio.models.base_model import Model, ModelConfig
 from nerfstudio.utils import colormaps
+import sys
 
+import cv2
+
+def debug_print(*args, **kwargs):
+    """Prints to stderr"""
+    print(*args, file=sys.stderr, **kwargs)
 
 @dataclass
 class FruitProposalModelConfig(ModelConfig):
@@ -328,9 +334,6 @@ class FruitProposalModel(Model):
             weights=weights,
         )
         semantic_labels = torch.argmax(torch.nn.functional.softmax(semantics, dim=-1), dim=-1)
-        if self.step%10==0:
-            print("semantics", semantics.shape, semantics[:10])
-            print("semantic_labels", semantic_labels.shape, semantic_labels[:10], sum(semantic_labels))
 
         with torch.no_grad():
             depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
@@ -420,9 +423,18 @@ class FruitProposalModel(Model):
         # Predictions
         pred_logits = outputs["semantics"]  # [N_rays, num_classes]
         pred_logits = torch.clamp(pred_logits, min=-3.8, max=7)
+                
         binary_values = batch["binary_img"][:,:3].to(self.device)
+        print("binary_values", binary_values.shape, binary_values[:10], sum(binary_values))
+
+        # Are the binary values the same as the image?
+        if torch.equal(batch["binary_img"], batch["image"]):
+            debug_print("binary_img is the same as image")
+
         summed_rgb = binary_values.sum(dim=-1)
         gt_sem = (summed_rgb != 0).long()
+        if self.step%10 == 0:
+            debug_print(gt_sem.shape, gt_sem[:10])
         assert torch.all((gt_sem == 0) | (gt_sem == 1)), "Ground truth cannot be interpreted as binary img"
         N_rays = pred_logits.shape[0]
         ray_indices = batch.get("ray_indices", torch.arange(N_rays, device=self.device))

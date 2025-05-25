@@ -168,7 +168,7 @@ class FruitProposalField(Field):
             in_dim=self.geo_feat_dim,
             num_layers=2,
             layer_width=64,
-            out_dim=hidden_dim_transient,
+            out_dim=num_semantic_classes,
             activation=nn.ReLU(),
             out_activation=None,
             implementation=implementation,
