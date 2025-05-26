@@ -423,18 +423,11 @@ class FruitProposalModel(Model):
         # Predictions
         pred_logits = outputs["semantics"]  # [N_rays, num_classes]
         pred_logits = torch.clamp(pred_logits, min=-3.8, max=7)
-                
         binary_values = batch["binary_img"][:,:3].to(self.device)
-        print("binary_values", binary_values.shape, binary_values[:10], sum(binary_values))
-
-        # Are the binary values the same as the image?
-        if torch.equal(batch["binary_img"], batch["image"]):
-            debug_print("binary_img is the same as image")
-
         summed_rgb = binary_values.sum(dim=-1)
         gt_sem = (summed_rgb != 0).long()
         if self.step%10 == 0:
-            debug_print(gt_sem.shape, gt_sem[:10])
+            debug_print(gt_sem.shape, gt_sem[:10], sum(gt_sem))
         assert torch.all((gt_sem == 0) | (gt_sem == 1)), "Ground truth cannot be interpreted as binary img"
         N_rays = pred_logits.shape[0]
         ray_indices = batch.get("ray_indices", torch.arange(N_rays, device=self.device))
