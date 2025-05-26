@@ -72,7 +72,7 @@ class FruitProposalModelConfig(ModelConfig):
     """How far along the ray to start sampling."""
     far_plane: float = 1000.0
     """How far along the ray to stop sampling."""
-    background_color: Literal["random", "last_sample", "black", "white"] = "last_sample"
+    background_color: Literal["random", "last_sample", "black", "white"] = "black"
     """Whether to randomize the background color."""
     hidden_dim: int = 64
     """Dimension of hidden layers"""
@@ -337,6 +337,9 @@ class FruitProposalModel(Model):
 
         with torch.no_grad():
             depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
+            if self.step % 10 == 0:
+                # Debugging: print the depth values
+                debug_print("Depth values:", depth[:10].cpu().numpy())
         
         expected_depth = self.renderer_expected_depth(weights=weights, ray_samples=ray_samples)
         accumulation = self.renderer_accumulation(weights=weights)
@@ -426,8 +429,6 @@ class FruitProposalModel(Model):
         binary_values = batch["binary_img"][:,:3].to(self.device)
         summed_rgb = binary_values.sum(dim=-1)
         gt_sem = (summed_rgb != 0).long()
-        if self.step%10 == 0:
-            debug_print(gt_sem.shape, gt_sem[:10], sum(gt_sem))
         assert torch.all((gt_sem == 0) | (gt_sem == 1)), "Ground truth cannot be interpreted as binary img"
         N_rays = pred_logits.shape[0]
         ray_indices = batch.get("ray_indices", torch.arange(N_rays, device=self.device))
