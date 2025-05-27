@@ -15,6 +15,10 @@ def parse_args():
         "--output_dir", default="outputs",
         help="Directory to save logs and checkpoints"
     )
+    parser.add_argument(
+        "--nerfacto_steps", type=int, default=None,
+        help="Max iterations for Nerfacto (overrides default max)"
+    )
     return parser.parse_args()
 
 def build_ns_args(args, method):
@@ -25,6 +29,8 @@ def build_ns_args(args, method):
         "--output-dir", args.output_dir,
         "--experiment-name", os.path.basename(args.dataset),
     ]
+    if args.nerfacto_steps is not None and method == "nerfacto":
+        cmd += ["--max-num-iterations", str(args.nerfacto_steps)]
     return cmd
 
 def run_training(args, method):
