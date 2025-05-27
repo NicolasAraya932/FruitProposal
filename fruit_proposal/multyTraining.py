@@ -28,6 +28,7 @@ def build_ns_args(args, method):
         "--data", args.dataset,
         "--output-dir", args.output_dir,
         "--experiment-name", os.path.basename(args.dataset),
+        "--viewer.quit-on-train-completion", "True",
     ]
     if args.nerfacto_steps is not None and method == "nerfacto":
         cmd += ["--max-num-iterations", str(args.nerfacto_steps)]
