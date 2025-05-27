@@ -39,6 +39,8 @@ from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager
 from nerfstudio.data.datamanagers.full_images_datamanager import FullImageDatamanager
 from nerfstudio.data.datamanagers.parallel_datamanager import ParallelDataManager
 from nerfstudio.data.datamanagers.random_cameras_datamanager import RandomCamerasDataManager
+from fruit_proposal.data.fruit_proposal_datamanager import FruitDataManager
+from fruit_proposal.exporter.exporter_utils import generate_fruit_proposal_radiance_cloud
 from nerfstudio.data.scene_box import OrientedBox
 from nerfstudio.exporter import texture_utils, tsdf_utils
 from nerfstudio.exporter.exporter_utils import collect_camera_poses, generate_point_cloud, generate_radiance_fields_cloud, get_mesh_from_filename
@@ -157,16 +159,20 @@ class ExportSemanticRadianceField(Exporter):
         output_path = self.output_dir / output_filename
 
         _, pipeline, _, _ = eval_setup(self.load_config)
-        print(pipeline, type(pipeline))
 
         # Ensure consistent batch size
         assert isinstance(
             pipeline.datamanager,
-            (VanillaDataManager, ParallelDataManager, FullImageDatamanager, RandomCamerasDataManager),
+            (FruitDataManager),
         )
         assert pipeline.datamanager.train_pixel_sampler is not None
 
-        outputs = {}       
+        outputs = generate_radiance_fields_cloud(
+                                            pipeline,
+                                            self.num_iterations,
+                                            "rgb",
+                                            "depth",
+                                        )
 
         # Generate a ray bundle and ensure consistent data types
         ray_bundle, _ = pipeline.datamanager.next_train(0)
@@ -745,7 +751,7 @@ class ExportGaussianSplat(Exporter):
 
 Commands = tyro.conf.FlagConversionOff[
     Union[
-        Annotated[ExportSemanticRadianceField, tyro.conf.subcommand(name="semantic-radiance-field")],
+        Annotated[ExportSemanticRadianceField, tyro.conf.subcommand(name="fruit-proposal")],
         Annotated[ExportRadianceField, tyro.conf.subcommand(name="radiance-field")],
         Annotated[ExportPointCloud, tyro.conf.subcommand(name="pointcloud")],
         Annotated[ExportTSDFMesh, tyro.conf.subcommand(name="tsdf")],

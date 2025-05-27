@@ -170,29 +170,6 @@ class FruitProposalModel(Model):
             scene_contraction = None
         else:
             scene_contraction = SceneContraction(order=float("inf"))
-        
-        """
-        NERFACTO FIELD TO PROCESS FREEZEN RGB + DENSITY
-        """
-        appearance_embedding_dim = self.config.appearance_embed_dim if self.config.use_appearance_embedding else 0
-        self.nerfacto_field = NerfactoField(
-            self.scene_box.aabb,
-            hidden_dim=self.config.hidden_dim,
-            num_levels=self.config.num_levels,
-            max_res=self.config.max_res,
-            base_res=self.config.base_res,
-            features_per_level=self.config.features_per_level,
-            log2_hashmap_size=self.config.log2_hashmap_size,
-            hidden_dim_color=self.config.hidden_dim_color,
-            hidden_dim_transient=self.config.hidden_dim_transient,
-            spatial_distortion=scene_contraction,
-            num_images=self.num_train_data,
-            use_pred_normals=self.config.predict_normals,
-            use_average_appearance_embedding=self.config.use_average_appearance_embedding,
-            appearance_embedding_dim=appearance_embedding_dim,
-            average_init_density=self.config.average_init_density,
-            implementation=self.config.implementation,
-        )
 
         """
         FRUIT PROPOSAL FIELD
@@ -271,10 +248,6 @@ class FruitProposalModel(Model):
         ) 
         
         # Renderers
-        self.renderer_rgb = RGBRenderer()
-        self.renderer_normals = NormalsRenderer()
-        self.normals_shader  = NormalsShader()
-
         self.renderer_semantics      = SemanticRenderer()
         self.renderer_accumulation   = AccumulationRenderer()
         self.renderer_depth          = DepthRenderer()
@@ -337,62 +310,54 @@ class FruitProposalModel(Model):
             )
         return callbacks
 
-
     def get_outputs(self, ray_bundle: RayBundle):
+        """Compute outputs for semantics only."""
         outputs = {}
 
-        # 1) camera refinement
         if self.training:
             self.camera_optimizer.apply_to_raybundle(ray_bundle)
 
-        # 2) sample proposals (same geometry for both)
-        ray_samples, weights_list, ray_samples_list = self.proposal_sampler(
-            ray_bundle, density_fns=self.density_fns
+        """
+        Sample points along rays using the proposal sampler.
+        """
+        ray_samples: RaySamples
+        ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
+
+        """
+        Compute fields outputs
+        """
+        fruit_proposal_field_outputs = self.fruit_proposal_field.forward(ray_samples)
+
+        """
+        Obtaining the density weights
+        """
+
+        fruit_proposal_weights_static = ray_samples.get_weights(fruit_proposal_field_outputs[FieldHeadNames.DENSITY])
+
+        fruit_proposal_weights_list = list(weights_list) + [fruit_proposal_weights_static]
+        ray_samples_list.append(ray_samples)
+
+        depth        = self.renderer_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
+        accumulation = self.renderer_accumulation(weights=fruit_proposal_weights_static)
+        
+        semantics = self.renderer_semantics(
+            fruit_proposal_field_outputs[FieldHeadNames.SEMANTICS],
+            weights=fruit_proposal_weights_static
         )
-
-        # 3) NerfactoField: first get density + feature embedding
-        density, geo_feats = self.nerfacto_field.get_density(ray_samples)
-        # compute the scalar weights from that density
-        nerf_weights = ray_samples.get_weights(density)
-
-        # now get the RGB (and any other heads) by passing the embedding back in
-        nerf_out = self.nerfacto_field.get_outputs(
-            ray_samples, density_embedding=geo_feats
-        )
-        rgb = self.renderer_rgb(
-            rgb=nerf_out[FieldHeadNames.RGB], weights=nerf_weights
-        )
-        depth = self.renderer_depth(weights=nerf_weights, ray_samples=ray_samples)
-        acc   = self.renderer_accumulation(weights=nerf_weights)
-
-        outputs.update({
-            "rgb": rgb,
-            "depth": depth,
-            "accumulation": acc,
-        })
-
-        # 4) FruitProposalField: reuse identical ray_samples + geo_feats
-        sem_out = self.fruit_proposal_field.get_outputs(
-            ray_samples, density_embedding=geo_feats
-        )
-        logits = sem_out[FieldHeadNames.SEMANTICS]
-        semantics = self.renderer_semantics(logits, weights=nerf_weights)
-        labels = torch.argmax(torch.nn.functional.softmax(semantics, dim=-1), dim=-1)
-
-        outputs.update({
-            "semantics": semantics,
-            "semantic_labels": labels,
-        })
-
-        # 5) training‐only bookkeeping
+        semantic_labels = torch.argmax(torch.nn.functional.softmax(semantics, dim=-1), dim=-1)
+        
+        outputs.update({"depth": depth,
+                        "accumulation": accumulation,
+                        "semantics": semantics,
+                        "semantic_labels": semantic_labels,
+                        })
+        
         if self.training:
-            outputs.update({
-                "proposal_weights_list": weights_list + [nerf_weights],
-                "ray_samples_list": ray_samples_list + [ray_samples],
-            })
+            outputs.update({"fruit_proposal_weights_list": fruit_proposal_weights_list,
+                            "ray_samples_list": ray_samples_list,
+                            })
 
         return outputs
-
 
 
     def get_loss_dict(self, outputs, batch, metrics_dict=None):

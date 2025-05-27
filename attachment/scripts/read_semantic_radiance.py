@@ -3,7 +3,7 @@ import viser
 import torch
 import numpy as np
 
-data = torch.load("/workspace/RadianceFields/semantic_radiance_field_20250429_222510.pt")
+data = torch.load("/workspace/FruitProposal/attachment/RadianceCloud/semantic_radiance_field_20250527_191954.pt")
 
 print(data.keys())
 
