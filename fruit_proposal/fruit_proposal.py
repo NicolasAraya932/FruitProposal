@@ -170,6 +170,29 @@ class FruitProposalModel(Model):
             scene_contraction = None
         else:
             scene_contraction = SceneContraction(order=float("inf"))
+        
+        """
+        NERFACTO FIELD TO PROCESS FREEZEN RGB + DENSITY
+        """
+        appearance_embedding_dim = self.config.appearance_embed_dim if self.config.use_appearance_embedding else 0
+        self.nerfacto_field = NerfactoField(
+            self.scene_box.aabb,
+            hidden_dim=self.config.hidden_dim,
+            num_levels=self.config.num_levels,
+            max_res=self.config.max_res,
+            base_res=self.config.base_res,
+            features_per_level=self.config.features_per_level,
+            log2_hashmap_size=self.config.log2_hashmap_size,
+            hidden_dim_color=self.config.hidden_dim_color,
+            hidden_dim_transient=self.config.hidden_dim_transient,
+            spatial_distortion=scene_contraction,
+            num_images=self.num_train_data,
+            use_pred_normals=self.config.predict_normals,
+            use_average_appearance_embedding=self.config.use_average_appearance_embedding,
+            appearance_embedding_dim=appearance_embedding_dim,
+            average_init_density=self.config.average_init_density,
+            implementation=self.config.implementation,
+        )
 
         """
         FRUIT PROPOSAL FIELD
@@ -248,6 +271,10 @@ class FruitProposalModel(Model):
         ) 
         
         # Renderers
+        self.renderer_rgb = RGBRenderer()
+        self.renderer_normals = NormalsRenderer()
+        self.normals_shader  = NormalsShader()
+
         self.renderer_semantics      = SemanticRenderer()
         self.renderer_accumulation   = AccumulationRenderer()
         self.renderer_depth          = DepthRenderer()
@@ -270,7 +297,7 @@ class FruitProposalModel(Model):
     def get_param_groups(self):
         param_groups = {}
         param_groups["proposal_networks"]       = list(self.proposal_networks.parameters())
-        param_groups["fruit_proposal_fields"]   = list(self.fruit_proposal_field.parameters())
+        param_groups["fields"]   = list(self.fruit_proposal_field.parameters())
         self.camera_optimizer.get_param_groups(param_groups=param_groups)
         return param_groups
 
@@ -310,52 +337,73 @@ class FruitProposalModel(Model):
             )
         return callbacks
 
+
     def get_outputs(self, ray_bundle: RayBundle):
-        """Compute outputs for semantics only."""
         outputs = {}
 
+        # 1) Apply camera refinement if enabled
         if self.training:
             self.camera_optimizer.apply_to_raybundle(ray_bundle)
 
-        """
-        Sample points along rays using the proposal sampler.
-        """
-        ray_samples: RaySamples
-        ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
+        # 2) Sample with proposal networks (same for both fields)
+        ray_samples, prop_weights_list, prop_samples_list = self.proposal_sampler(
+            ray_bundle, density_fns=self.density_fns
+        )
 
-        """
-        Compute fields outputs
-        """
-        fruit_proposal_field_outputs = self.fruit_proposal_field.forward(ray_samples)
+        # 3) Nerfacto branch: density + RGB (and optional normals)
+        nerf_field_outputs = self.nerfacto_field.forward(
+            ray_samples, compute_normals=self.config.predict_normals
+        )
+        nerf_weights = ray_samples.get_weights(nerf_field_outputs[FieldHeadNames.DENSITY])
+        prop_weights_list.append(nerf_weights)
+        prop_samples_list.append(ray_samples)
 
-        """
-        Obtaining the density weights
-        """
+        # Render RGB, depth, expected_depth, accumulation, normals
+        rgb = self.renderer_rgb(rgb=nerf_field_outputs[FieldHeadNames.RGB], weights=nerf_weights)
+        depth = self.renderer_depth(weights=nerf_weights, ray_samples=ray_samples)
+        expected_depth = self.renderer_expected_depth(weights=nerf_weights, ray_samples=ray_samples)
+        accumulation = self.renderer_accumulation(weights=nerf_weights)
+        outputs.update({
+            "rgb": rgb,
+            "depth": depth,
+            "expected_depth": expected_depth,
+            "accumulation": accumulation,
+        })
 
-        fruit_proposal_weights_static = ray_samples.get_weights(fruit_proposal_field_outputs[FieldHeadNames.DENSITY])
+        if self.config.predict_normals:
+            normals = self.renderer_normals(
+                normals=nerf_field_outputs[FieldHeadNames.NORMALS], weights=nerf_weights
+            )
+            pred_normals = self.renderer_normals(
+                normals=nerf_field_outputs[FieldHeadNames.PRED_NORMALS], weights=nerf_weights
+            )
+            outputs.update({
+                "normals": self.normals_shader(normals),
+                "pred_normals": self.normals_shader(pred_normals),
+            })
 
-        fruit_proposal_weights_list = list(weights_list) + [fruit_proposal_weights_static]
-        ray_samples_list.append(ray_samples)
+        # 4) Semantic branch: reuse the SAME ray_samples, SAME nerf_weights
+        #    (geometry is fixed), but run your FruitProposalField
+        sem_field_outputs = self.fruit_proposal_field.forward(ray_samples)
 
-        depth        = self.renderer_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
-        accumulation = self.renderer_accumulation(weights=fruit_proposal_weights_static)
-        
         semantics = self.renderer_semantics(
-            fruit_proposal_field_outputs[FieldHeadNames.SEMANTICS],
-            weights=fruit_proposal_weights_static
+            sem_field_outputs[FieldHeadNames.SEMANTICS], weights=nerf_weights
         )
         semantic_labels = torch.argmax(torch.nn.functional.softmax(semantics, dim=-1), dim=-1)
-        
-        outputs.update({"depth": depth,
-                        "accumulation": accumulation,
-                        "semantics": semantics,
-                        "semantic_labels": semantic_labels,
-                        })
-        
+        outputs.update({
+            "semantics": semantics,
+            "semantic_labels": semantic_labels,
+        })
+
+        # 5) If training, expose the intermediate lists for losses
         if self.training:
-            outputs.update({"fruit_proposal_weights_list": fruit_proposal_weights_list,
-                            "ray_samples_list": ray_samples_list,
-                            })
+            outputs.update({
+                "weights_list": prop_weights_list,
+                "ray_samples_list": prop_samples_list,
+            })
+            if self.config.predict_normals:
+                # you can include normal-based losses here as before
+                pass
 
         return outputs
 
