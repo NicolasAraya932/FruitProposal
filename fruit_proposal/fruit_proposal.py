@@ -346,11 +346,6 @@ class FruitProposalModel(Model):
         )
         semantic_labels = torch.argmax(torch.nn.functional.softmax(semantics, dim=-1), dim=-1)
         
-        if self.step%10==0:
-            CONSOLE.print(f"Step {self.step}: Depth min {depth.min().item():.3f}, max {depth.max().item():.3f}, "
-                          f"Accumulation min {accumulation.min().item():.3f}, max {accumulation.max().item():.3f}, "
-                          f"Semantics shape {semantics.shape}, Semantic labels {sum(semantic_labels)}")
-
         outputs.update({"depth": depth,
                         "accumulation": accumulation,
                         "semantics": semantics,
