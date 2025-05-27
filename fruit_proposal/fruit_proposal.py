@@ -179,28 +179,10 @@ class FruitProposalModel(Model):
             num_levels = self.config.num_levels,
             base_res = self.config.base_res,
             max_res = self.config.max_res,
-            num_images=self.num_train_data,
             log2_hashmap_size = self.config.log2_hashmap_size,
             features_per_level = self.config.features_per_level,
             average_init_density = self.config.average_init_density,
             implementation = self.config.implementation
-        )
-
-        """
-        NERFACTO FIELD
-        """
-        self.nerfacto_field = NerfactoField(
-            self.scene_box.aabb,
-            hidden_dim=self.config.hidden_dim,
-            num_levels=self.config.num_levels,
-            max_res=self.config.max_res,
-            base_res=self.config.base_res,
-            features_per_level=self.config.features_per_level,
-            log2_hashmap_size=self.config.log2_hashmap_size,
-            hidden_dim_color=self.config.hidden_dim_color,
-            spatial_distortion=scene_contraction,
-            num_images=self.num_train_data,
-            implementation=self.config.implementation,
         )
 
         self.camera_optimizer: CameraOptimizer = self.config.camera_optimizer.setup(
@@ -267,17 +249,10 @@ class FruitProposalModel(Model):
         
         # Renderers
         self.renderer_semantics      = SemanticRenderer()
-        self.renderer_rgb            = RGBRenderer(background_color=self.config.background_color)
         self.renderer_accumulation   = AccumulationRenderer()
         self.renderer_depth          = DepthRenderer()
-        self.renderer_expected_depth = DepthRenderer(method="expected")
-        self.renderer_normals        = NormalsRenderer()
-
-        # shaders
-        self.normals_shader = NormalsShader()
 
         # Losses
-        self.rgb_loss        = MSELoss()
         self.semantic_loss   = CrossEntropyLoss() # Default reduction="mean")
         self.interlevel_loss = interlevel_loss
         self.step = 0
@@ -295,7 +270,6 @@ class FruitProposalModel(Model):
     def get_param_groups(self):
         param_groups = {}
         param_groups["proposal_networks"]       = list(self.proposal_networks.parameters())
-        param_groups["nerfacto_fields"]         = list(self.nerfacto_field.parameters())
         param_groups["fruit_proposal_fields"]   = list(self.fruit_proposal_field.parameters())
         self.camera_optimizer.get_param_groups(param_groups=param_groups)
         return param_groups
@@ -349,72 +323,44 @@ class FruitProposalModel(Model):
         ray_samples: RaySamples
         ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
 
-
         """
         Compute fields outputs
         """
-        nerfacto_field_outputs = self.nerfacto_field.forward(ray_samples)
         fruit_proposal_field_outputs = self.fruit_proposal_field.forward(ray_samples)
-
-        if self.config.use_gradient_scaling:
-            nerfacto_field_outputs       = scale_gradients_by_distance_squared(nerfacto_field_outputs, ray_samples)
-            fruit_proposal_field_outputs = scale_gradients_by_distance_squared(fruit_proposal_field_outputs, ray_samples)
 
         """
         Obtaining the density weights
         """
-        nerfacto_density  = torch.clamp(nerfacto_field_outputs[FieldHeadNames.DENSITY], 0.0, 100.0)
-        fruit_proposal_density = torch.clamp(fruit_proposal_field_outputs[FieldHeadNames.DENSITY], 0.0, 100.0)
 
-        nerfacto_weights_static       = ray_samples.get_weights(nerfacto_density)
-        fruit_proposal_weights_static = ray_samples.get_weights(fruit_proposal_density)
+        fruit_proposal_weights_static = ray_samples.get_weights(fruit_proposal_field_outputs[FieldHeadNames.DENSITY])
 
-        nerfacto_weights_list       = list(weights_list) + [nerfacto_weights_static]
         fruit_proposal_weights_list = list(weights_list) + [fruit_proposal_weights_static]
         ray_samples_list.append(ray_samples)
 
-
-        fruit_proposal_depth   = self.renderer_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
-        nerfacto_depth         = self.renderer_depth(weights=nerfacto_weights_static,       ray_samples=ray_samples)
-
-        print("==============DEPTH===================")
-        print(f"fruit_proposal_depth: {fruit_proposal_depth[-1]}")
-        print(f"nerfacto_depth: {nerfacto_depth[-1]}")
-
-        fruit_proposal_expected_depth   = self.renderer_expected_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
-        nerfacto_expected_depth         = self.renderer_expected_depth(weights=nerfacto_weights_static, ray_samples=ray_samples)
-        nerfacto_accumulation   = self.renderer_accumulation(weights=nerfacto_weights_static)
+        depth        = self.renderer_depth(weights=fruit_proposal_weights_static, ray_samples=ray_samples)
+        accumulation = self.renderer_accumulation(weights=fruit_proposal_weights_static)
         
-
-        """
-        Rendering the RGB and semantics
-        """
-
-        rgb = self.renderer_rgb(rgb=nerfacto_field_outputs[FieldHeadNames.RGB], weights=nerfacto_weights_static)
         semantics = self.renderer_semantics(
             fruit_proposal_field_outputs[FieldHeadNames.SEMANTICS],
             weights=fruit_proposal_weights_static
         )
         semantic_labels = torch.argmax(torch.nn.functional.softmax(semantics, dim=-1), dim=-1)
+        
+        if self.step%10==0:
+            CONSOLE.print(f"Step {self.step}: Depth min {depth.min().item():.3f}, max {depth.max().item():.3f}, "
+                          f"Accumulation min {accumulation.min().item():.3f}, max {accumulation.max().item():.3f}, "
+                          f"Semantics shape {semantics.shape}, Semantic labels {sum(semantic_labels)}")
 
-        outputs.update({"rgb": rgb,
-                        "accumulation": nerfacto_accumulation,
-                        "depth": nerfacto_depth,
-                        "expected_depth": nerfacto_expected_depth,
+        outputs.update({"depth": depth,
+                        "accumulation": accumulation,
                         "semantics": semantics,
                         "semantic_labels": semantic_labels,
-                        "fruit_proposal_depth": fruit_proposal_depth,
-                        "fruit_proposal_expected_depth": fruit_proposal_expected_depth,
                         })
         
         if self.training:
             outputs.update({"fruit_proposal_weights_list": fruit_proposal_weights_list,
-                            "nerfacto_weights_list": nerfacto_weights_list,
                             "ray_samples_list": ray_samples_list,
                             })
-
-        for i, (w_iter, rs_iter) in enumerate(zip(weights_list, ray_samples_list)):
-            outputs[f"prop_depth_{i}"] = self.renderer_depth(weights=w_iter, ray_samples=rs_iter)
 
         return outputs
 
@@ -426,46 +372,12 @@ class FruitProposalModel(Model):
 
         loss_dict = {}
 
-        """
-        FOR RGB
-        """
-        image = batch["image"].to(self.device)
-        pred_rgb, gt_rgb = self.renderer_rgb.blend_background_for_loss_computation(
-            pred_image=outputs["rgb"],
-            pred_accumulation=outputs["accumulation"],
-            gt_image=image,
-        )
-        print("===============PRED vs GT=================")
-        print(pred_rgb[-1], gt_rgb[-1], image[-1])
-        print("================================")
-
-        loss_dict["rgb_loss"] = self.rgb_loss(gt_rgb, pred_rgb)
-        print("==============RGB LOSS==================")
-        print(loss_dict["rgb_loss"])
-        print("================================")
-
-        if self.training:
-            loss_dict["interlevel_loss"] = self.config.interlevel_loss_mult * interlevel_loss(
-                outputs["nerfacto_weights_list"], outputs["ray_samples_list"]
-            )
-            assert metrics_dict is not None and "distortion" in metrics_dict
-            loss_dict["distortion_loss"] = self.config.distortion_loss_mult * metrics_dict["distortion"]
-            # Add loss from camera optimizer
-            self.camera_optimizer.get_loss_dict(loss_dict)
-        
-        """
-        FOR SEMANTICS
-        """
-
         # Predictions
         pred_logits = outputs["semantics"]  # [N_rays, num_classes]
         pred_logits = torch.clamp(pred_logits, min=-3.8, max=7)
 
         # Convert summed_rgb to binary: 1 if non-zero, 0 otherwise
         binary_values = batch["binary_img"][:,:3].to(self.device)
-        print("==============BINARY VALUES=================")
-        print(binary_values[-1])
-
         summed_rgb = binary_values.sum(dim=-1)
         binary_img = (summed_rgb != 0).long()
 
@@ -486,24 +398,6 @@ class FruitProposalModel(Model):
     def get_metrics_dict(self, outputs, batch):
         metrics_dict = {}
 
-        """
-        FOR RGB
-        """
-        gt_rgb = batch["image"].to(self.device)  # RGB or RGBA image
-        gt_rgb = self.renderer_rgb.blend_background(gt_rgb)  # Blend if RGBA
-        predicted_rgb = outputs["rgb"]
-        metrics_dict.update({"rgb_psnr": self.psnr(predicted_rgb, gt_rgb)})
-
-        if self.training:
-            metrics_dict.update({
-                "distortion":distortion_loss(outputs["nerfacto_weights_list"], outputs["ray_samples_list"])
-                })
-
-        self.camera_optimizer.get_metrics_dict(metrics_dict)
-
-        """
-        FOR SEMANTICS
-        """
         pred_logits = outputs["semantics"]  # [N_rays, num_classes]
         pred_logits = torch.clamp(pred_logits, min=-3.8, max=7)
         N_rays = pred_logits.shape[0]
@@ -533,44 +427,20 @@ class FruitProposalModel(Model):
     def get_image_metrics_and_images(
         self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]
     ) -> Tuple[Dict[str, float], Dict[str, torch.Tensor]]:
-        """
-        FOR RGB
-        """
-        gt_rgb = batch["image"].to(self.device)
-        predicted_rgb = outputs["rgb"]  # Blended with background (black if random background)
-        gt_rgb = self.renderer_rgb.blend_background(gt_rgb)
+
         acc = colormaps.apply_colormap(outputs["accumulation"])
         depth = colormaps.apply_depth_colormap(
             outputs["depth"],
             accumulation=outputs["accumulation"],
         )
 
-        combined_rgb = torch.cat([gt_rgb, predicted_rgb], dim=1)
         combined_acc = torch.cat([acc], dim=1)
         combined_depth = torch.cat([depth], dim=1)
 
-        # Switch images from [H, W, C] to [1, C, H, W] for metrics computations
-        gt_rgb = torch.moveaxis(gt_rgb, -1, 0)[None, ...]
-        predicted_rgb = torch.moveaxis(predicted_rgb, -1, 0)[None, ...]
-
-        psnr = self.psnr(gt_rgb, predicted_rgb)
-        ssim = self.ssim(gt_rgb, predicted_rgb)
-        lpips = self.lpips(gt_rgb, predicted_rgb)
-
         # all of these metrics will be logged as scalars
-        metrics_dict = {"psnr": float(psnr.item()), "ssim": float(ssim)}  # type: ignore
-        metrics_dict["lpips"] = float(lpips)
+        metrics_dict          = {"psnr": float(psnr.item()), "ssim": float(ssim)}  # type: ignore
 
-        images_dict = {"img": combined_rgb,
-                       "accumulation": combined_acc,
+        images_dict = {"accumulation": combined_acc,
                        "depth": combined_depth}
-
-        for i in range(self.config.num_proposal_iterations):
-            key = f"prop_depth_{i}"
-            prop_depth_i = colormaps.apply_depth_colormap(
-                outputs[key],
-                accumulation=outputs["accumulation"],
-            )
-            images_dict[key] = prop_depth_i
 
         return metrics_dict, images_dict

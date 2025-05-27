@@ -35,7 +35,6 @@ class FruitProposalField(Field):
     def __init__(
         self,
         aabb: Tensor,
-        num_images: int,
         num_levels: int = 4,
         base_res: int = 16,
         max_res: int = 2048,
@@ -51,15 +50,14 @@ class FruitProposalField(Field):
     ) -> None:
         super().__init__()
         self.register_buffer("aabb", aabb)
-        self.register_buffer("max_res", torch.tensor(max_res))
-        self.register_buffer("num_levels", torch.tensor(num_levels))
-        self.register_buffer("log2_hashmap_size", torch.tensor(log2_hashmap_size))
-        self.num_images = num_images
         self.average_init_density = average_init_density
         self.geo_feat_dim = geo_feat_dim
         self.num_semantic_classes = num_semantic_classes
 
+        # print("Inside the SemanticIEField constructor")
+        # print(f"Using {num_levels} levels, base res {base_res}, max res {max_res}, log2_hashmap_size {log2_hashmap_size}")
 
+        # Merge of encoding and mlp_base
         """
         args:
             def __init__(
@@ -81,14 +79,6 @@ class FruitProposalField(Field):
 
         Adding disponible args from the encoding and mlp_base
         """
-
-        # Encoding for directions
-        self.direction_encoding = SHEncoding(
-            levels=4,
-            implementation=implementation,
-        )
-
-        # Density base mlp with hash encoding
         self.mlp_base = MLPWithHashEncoding(
             num_levels=num_levels,
             min_res=base_res,
@@ -150,8 +140,8 @@ class FruitProposalField(Field):
         self, ray_samples: RaySamples, density_embedding: Optional[Tensor] = None
     ) -> Dict[FieldHeadNames, Tensor]:
         """Get outputs for density and semantics."""
-        assert density_embedding is not None, "density_embedding is None :C"
 
+        assert density_embedding is not None, "density_embedding is None :C"
         outputs = {}
 
         outputs_shape = ray_samples.frustums.directions.shape[:-1]
@@ -161,5 +151,5 @@ class FruitProposalField(Field):
         semantic_logits = self.mlp_semantic(semantics_input).view(*outputs_shape, -1).to(semantics_input)
         semantics = self.field_head_semantic(semantic_logits).to(semantics_input)
         outputs.update({FieldHeadNames.SEMANTICS: semantics})
-
+    
         return outputs
