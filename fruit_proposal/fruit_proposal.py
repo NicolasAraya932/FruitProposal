@@ -341,71 +341,58 @@ class FruitProposalModel(Model):
     def get_outputs(self, ray_bundle: RayBundle):
         outputs = {}
 
-        # 1) Apply camera refinement if enabled
+        # 1) camera refinement
         if self.training:
             self.camera_optimizer.apply_to_raybundle(ray_bundle)
 
-        # 2) Sample with proposal networks (same for both fields)
-        ray_samples, prop_weights_list, prop_samples_list = self.proposal_sampler(
+        # 2) sample proposals (same geometry for both)
+        ray_samples, weights_list, ray_samples_list = self.proposal_sampler(
             ray_bundle, density_fns=self.density_fns
         )
 
-        # 3) Nerfacto branch: density + RGB (and optional normals)
-        nerf_field_outputs = self.nerfacto_field.forward(
-            ray_samples, compute_normals=self.config.predict_normals
-        )
-        nerf_weights = ray_samples.get_weights(nerf_field_outputs[FieldHeadNames.DENSITY])
-        prop_weights_list.append(nerf_weights)
-        prop_samples_list.append(ray_samples)
+        # 3) NerfactoField: first get density + feature embedding
+        density, geo_feats = self.nerfacto_field.get_density(ray_samples)
+        # compute the scalar weights from that density
+        nerf_weights = ray_samples.get_weights(density)
 
-        # Render RGB, depth, expected_depth, accumulation, normals
-        rgb = self.renderer_rgb(rgb=nerf_field_outputs[FieldHeadNames.RGB], weights=nerf_weights)
+        # now get the RGB (and any other heads) by passing the embedding back in
+        nerf_out = self.nerfacto_field.get_outputs(
+            ray_samples, density_embedding=geo_feats
+        )
+        rgb = self.renderer_rgb(
+            rgb=nerf_out[FieldHeadNames.RGB], weights=nerf_weights
+        )
         depth = self.renderer_depth(weights=nerf_weights, ray_samples=ray_samples)
-        expected_depth = self.renderer_expected_depth(weights=nerf_weights, ray_samples=ray_samples)
-        accumulation = self.renderer_accumulation(weights=nerf_weights)
+        acc   = self.renderer_accumulation(weights=nerf_weights)
+
         outputs.update({
             "rgb": rgb,
             "depth": depth,
-            "expected_depth": expected_depth,
-            "accumulation": accumulation,
+            "accumulation": acc,
         })
 
-        if self.config.predict_normals:
-            normals = self.renderer_normals(
-                normals=nerf_field_outputs[FieldHeadNames.NORMALS], weights=nerf_weights
-            )
-            pred_normals = self.renderer_normals(
-                normals=nerf_field_outputs[FieldHeadNames.PRED_NORMALS], weights=nerf_weights
-            )
-            outputs.update({
-                "normals": self.normals_shader(normals),
-                "pred_normals": self.normals_shader(pred_normals),
-            })
-
-        # 4) Semantic branch: reuse the SAME ray_samples, SAME nerf_weights
-        #    (geometry is fixed), but run your FruitProposalField
-        sem_field_outputs = self.fruit_proposal_field.forward(ray_samples)
-
-        semantics = self.renderer_semantics(
-            sem_field_outputs[FieldHeadNames.SEMANTICS], weights=nerf_weights
+        # 4) FruitProposalField: reuse identical ray_samples + geo_feats
+        sem_out = self.fruit_proposal_field.get_outputs(
+            ray_samples, density_embedding=geo_feats
         )
-        semantic_labels = torch.argmax(torch.nn.functional.softmax(semantics, dim=-1), dim=-1)
+        logits = sem_out[FieldHeadNames.SEMANTICS]
+        semantics = self.renderer_semantics(logits, weights=nerf_weights)
+        labels = torch.argmax(torch.nn.functional.softmax(semantics, dim=-1), dim=-1)
+
         outputs.update({
             "semantics": semantics,
-            "semantic_labels": semantic_labels,
+            "semantic_labels": labels,
         })
 
-        # 5) If training, expose the intermediate lists for losses
+        # 5) training‐only bookkeeping
         if self.training:
             outputs.update({
-                "weights_list": prop_weights_list,
-                "ray_samples_list": prop_samples_list,
+                "proposal_weights_list": weights_list + [nerf_weights],
+                "ray_samples_list": ray_samples_list + [ray_samples],
             })
-            if self.config.predict_normals:
-                # you can include normal-based losses here as before
-                pass
 
         return outputs
+
 
 
     def get_loss_dict(self, outputs, batch, metrics_dict=None):
