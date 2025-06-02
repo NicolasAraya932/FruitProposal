@@ -168,89 +168,46 @@ print(f"Suggested k ≈ {k_candidate} (10th percentile of neighbor counts)")
 min_neighbors = k_candidate
 mask_keep = neighbor_counts >= min_neighbors
 filtered_points = points[mask_keep]
-filtered_labels = labels[mask_keep]
 
 print(f"Filtered out {np.sum(~mask_keep)} noise points; kept {np.sum(mask_keep)} points in clusters.")
 
 # Example usage:
-filtered_pts = filtered_points # from density_filter above
+filtered_pts = filtered_points# from density_filter above
 min_samples = 10      # DBSCAN’s “core point” requirement (often same as k)
 min_cluster_size = 10 # any cluster <20 points is too small to be a fruit
 
 clusters, keep_clusters_mask = cluster_and_filter(filtered_pts, r_candidate, min_samples, min_cluster_size)
 print(f"Found {len(clusters)} clusters of size ≥ {min_cluster_size}")
 
-all_corners = []
-
-for cidx, idx in clusters:
-    # idx is an array of indices into filtered_pts
-    cluster_points = filtered_pts[idx]          # <-- use filtered_pts here
-    cluster_labels = filtered_labels[idx]       # <-- likewise for labels
-
-    # compute bounding sphere (center, radius)
-    center, radius = ritters_enclosing_sphere(cluster_points)
-
-    # convert to 8 AABB corners
-    corners = sphere_to_bbox(center, radius + 1e-3)
-
-    # Saving as points
-
-    all_corners.append(corners)
-
-# Concatenate all corners into a single array
-all_corners = np.vstack(all_corners)
-
-# Save corners at /workspace/FruitProposal/attachment/RadianceCloud/bounding_boxes.npy
-np.save("/workspace/FruitProposal/attachment/RadianceCloud/bounding_boxes.npy", all_corners)
-
-all_colors_corners = np.zeros((all_corners.shape[0], 3))  # black (0,0,0)
-
-viser = viser.ViserServer(port=9009)
-
-pcd_bbox = o3d.geometry.PointCloud()
-pcd_bbox.points = o3d.utility.Vector3dVector(all_corners)
-pcd_bbox.colors = o3d.utility.Vector3dVector(all_colors_corners)
-viser.scene.add_point_cloud(
-    name="bounding_boxes",
-    points=np.asarray(pcd_bbox.points),
-    colors=np.asarray(pcd_bbox.colors),
-    point_size=0.001,
-)
-
-# After you have center and radius for each cluster:
-for cidx, idx in clusters:
-    cluster_points = filtered_pts[idx]
-    center, radius = ritters_enclosing_sphere(cluster_points)
-    # Add a box for this fruit cluster
-    viser.scene.add_box(
-        name=f"bbox_{cidx}",
-        color=(1.0, 0.0, 0.0),  # Red box
-        dimensions=(2*radius, 2*radius, 2*radius),
-        position=center,
-        visible=True
-    )
-
+# `keep_clusters_mask` marks all points that belong to a valid fruit cluster.
 fruit_pts = filtered_pts[keep_clusters_mask]
 fruit_labels = labels[mask_keep][keep_clusters_mask]
 
-pcd_filtered = o3d.geometry.PointCloud()
-pcd_filtered.points = o3d.utility.Vector3dVector(fruit_pts.cpu().numpy())
-colors = create_color_vector(fruit_labels.cpu().numpy())
-pcd_filtered.colors = o3d.utility.Vector3dVector(colors)
+# Using Viser to visualize the first cluster
 
-viser.scene.add_point_cloud(
-    name="filtered_points",
-    points=np.asarray(pcd_filtered.points),
-    colors=np.asarray(pcd_filtered.colors),
-    point_size=0.001,
-)
+cluster_points = filtered_pts[clusters[0][1]]
+
+r, c = ritters_enclosing_sphere(cluster_points)
+
+corners = sphere_to_bbox(r, c)
+bbox_colors = np.tile(np.array([[0.0, 0.0, 0.0]]), (corners.shape[0], 1))  # red for all corners
+
+print(f"Cluster {clusters[0][0]}: Center = {r}, Radius = {c}")
+print(f"Bounding box corners:\n{corners}")
+
+# Add the bounding box to the visualization
+
+visual = VisualizePoints(cluster_points, labels[mask_keep][clusters[0][1]], port=9009)
+
+server = visual.getViserServer()
+server.scene.add_point_cloud(name="bbox",
+                       points=corners,
+                       colors=bbox_colors,
+                       point_size=0.001)
+
+visual.wait_for_user_input(wait=True)
 
 
-
-while True:
-    x = input("Press Enter to continue...")
-    if x == "":
-        break
 
 
 # VisualizePoints(fruit_pts, fruit_labels, port=9009, wait=False)
