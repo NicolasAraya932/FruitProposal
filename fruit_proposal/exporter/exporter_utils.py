@@ -179,8 +179,6 @@ def generate_fruit_proposal_radiance_cloud(
     num_points: int = 3500000,
     semantic_output_name: str = "semantic_labels",
     depth_output_name: str = "depth",
-    normal_output_name: Optional[str] = None,
-    crop_obb: Optional[OrientedBox] = None,
 ) -> Dict[str, torch.Tensor]:
     """Generate a radiance field dataset from a NeRF model.
 
@@ -210,13 +208,11 @@ def generate_fruit_proposal_radiance_cloud(
     depths          = []
     origins         = []
     directions      = []
-    view_directions = []
-    normals         = []
+    semantics_labels = []
 
     with progress as progress_bar:
         task = progress_bar.add_task("Generating Radiance Field", total=num_points)
         while not progress_bar.finished:
-            normal = None
 
             with torch.no_grad():
                 ray_bundle, _ = pipeline.datamanager.next_train(0)
@@ -238,57 +234,27 @@ def generate_fruit_proposal_radiance_cloud(
             depth = outputs[depth_output_name]
             semantic_labels = outputs[semantic_output_name]
 
-            print(semantic_labels)
-
-            if normal_output_name is not None:
-                if normal_output_name not in outputs:
-                    CONSOLE.rule("Error", style="red")
-                    CONSOLE.print(f"Could not find {normal_output_name} in the model outputs", justify="center")
-                    CONSOLE.print(f"Please set --normal_output_name to one of: {outputs.keys()}", justify="center")
-                    sys.exit(1)
-                normal = outputs[normal_output_name]
-                assert (
-                    torch.min(normal) >= 0.0 and torch.max(normal) <= 1.0
-                ), "Normal values from method output must be in [0, 1]"
-                normal = (normal * 2.0) - 1.0
-
             point = ray_bundle.origins + ray_bundle.directions * depth
-            view_direction = ray_bundle.directions
-
-            if normal is not None:
-                normal = normal[mask]
-
-            if crop_obb is not None:
-                mask = crop_obb.within(point)
-                point = point[mask]
-                view_direction = view_direction[mask]
-                if normal is not None:
-                    normal = normal[mask]
 
             # Append data to lists
             points.append(point.cpu())
-            accumulations.append(outputs["accumulation"][mask].cpu())
-            depths.append(outputs["depth"][mask].cpu())
-            origins.append(ray_bundle.origins[mask].cpu())
-            directions.append(ray_bundle.directions[mask].cpu())
-            view_directions.append(view_direction.cpu())
-
-            if normal is not None:
-                normals.append(normal.cpu())
+            semantics_labels.append(semantic_labels.cpu())
+            accumulations.append(outputs["accumulation"].cpu())
+            depths.append(outputs["depth"].cpu())
+            origins.append(ray_bundle.origins.cpu())
+            directions.append(ray_bundle.directions.cpu())
 
             progress.advance(task, point.shape[0])
 
+    
     # Combine lists into tensors on the CPU
     radiance_field_data = {
         "points": torch.cat(points, dim=0),
         "accumulation": torch.cat(accumulations, dim=0),
+        "semantic_labels": torch.cat(semantics_labels, dim=0),
         "depth": torch.cat(depths, dim=0),
         "origins": torch.cat(origins, dim=0),
         "directions": torch.cat(directions, dim=0),
-        "view_directions": torch.cat(view_directions, dim=0),
     }
-
-    if normals:
-        radiance_field_data["normals"] = torch.cat(normals, dim=0)
 
     return radiance_field_data

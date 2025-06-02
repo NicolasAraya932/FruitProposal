@@ -27,8 +27,9 @@ import torch
 from torch.nn import Parameter
 from torch.nn import CrossEntropyLoss
 
+import json
+
 from nerfstudio.cameras.rays              import RayBundle, RaySamples
-from nerfstudio.cameras.camera_optimizers import CameraOptimizer, CameraOptimizerConfig
 
 from nerfstudio.engine.callbacks import (
     TrainingCallback,
@@ -152,8 +153,6 @@ class FruitProposalModelConfig(ModelConfig):
     """Dimension of the appearance embedding."""
     average_init_density: float = 1.0
     """Average initial density output from MLP. """
-    camera_optimizer: CameraOptimizerConfig = field(default_factory=lambda: CameraOptimizerConfig(mode="SO3xR3"))
-    """Config of the camera optimizer to use"""
 
 class FruitProposalModel(Model):
     """Semantic NeRF model for binary semantics and density."""
@@ -161,6 +160,7 @@ class FruitProposalModel(Model):
     config: FruitProposalModelConfig
     to_save: bool = False
     last_semantic_labels: Dict = None
+    metrics_history = []
 
     def populate_modules(self):
         """Set the fields and modules."""
@@ -185,9 +185,6 @@ class FruitProposalModel(Model):
             implementation = self.config.implementation
         )
 
-        self.camera_optimizer: CameraOptimizer = self.config.camera_optimizer.setup(
-            num_cameras=self.num_train_data, device="cpu"
-        )
         self.density_fns = []
         num_prop_nets = self.config.num_proposal_iterations
         # Build the proposal network(s)
@@ -271,7 +268,6 @@ class FruitProposalModel(Model):
         param_groups = {}
         param_groups["proposal_networks"]       = list(self.proposal_networks.parameters())
         param_groups["fields"]   = list(self.fruit_proposal_field.parameters())
-        self.camera_optimizer.get_param_groups(param_groups=param_groups)
         return param_groups
 
     def get_training_callbacks(
@@ -314,8 +310,6 @@ class FruitProposalModel(Model):
         """Compute outputs for semantics only."""
         outputs = {}
 
-        if self.training:
-            self.camera_optimizer.apply_to_raybundle(ray_bundle)
 
         """
         Sample points along rays using the proposal sampler.
@@ -351,7 +345,10 @@ class FruitProposalModel(Model):
                         "semantics": semantics,
                         "semantic_labels": semantic_labels,
                         })
-        
+
+        if self.step % 199 == 0:
+            torch.save(self.metrics_history, "metrics_history.pt")
+
         if self.training:
             outputs.update({"fruit_proposal_weights_list": fruit_proposal_weights_list,
                             "ray_samples_list": ray_samples_list,
@@ -415,6 +412,8 @@ class FruitProposalModel(Model):
         
         metrics_dict.update({"semantic_accuracy": (pred_labels == gt_labels).float().mean()})
         metrics_dict.update({"semantic_psnr": self.psnr(pred_labels, gt_labels)})
+
+        self.metrics_history.append(metrics_dict["semantic_accuracy"])
 
         return metrics_dict
 

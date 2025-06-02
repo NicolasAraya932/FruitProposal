@@ -134,7 +134,6 @@ class ExportRadianceField(Exporter):
                                         )
 
         # Save to file
-        output_path = self.output_dir / output_filename
         torch.save(radiance_field_data, output_path)
 
         CONSOLE.print(f"[bold green]:white_check_mark: Radiance field saved to {output_path}")
@@ -143,7 +142,7 @@ class ExportRadianceField(Exporter):
 class ExportSemanticRadianceField(Exporter):
     """Export the trained semantic radiance field to a .pt file using torch from outputs dict."""
 
-    num_iterations: int = 1000000
+    num_iterations: int = 1500000
     """Number of iterations to run the evaluation for."""
     num_rays_per_batch: int = 8192
     """Number of rays to evaluate per batch. Decrease if you run out of memory."""
@@ -167,24 +166,14 @@ class ExportSemanticRadianceField(Exporter):
         )
         assert pipeline.datamanager.train_pixel_sampler is not None
 
-        outputs = generate_radiance_fields_cloud(
-                                            pipeline,
-                                            self.num_iterations,
-                                            "rgb",
-                                            "depth",
+        outputs = generate_fruit_proposal_radiance_cloud(
+                                            pipeline=pipeline,
+                                            num_points=self.num_iterations,
+                                            semantic_output_name="semantic_labels",
+                                            depth_output_name="depth",
                                         )
 
-        # Generate a ray bundle and ensure consistent data types
-        ray_bundle, _ = pipeline.datamanager.next_train(0)
-        assert isinstance(ray_bundle, RayBundle)
-
-        output_model = pipeline.model(ray_bundle)
-
-        outputs.update({
-            "ray_bundle" : ray_bundle,
-            "outputs" : output_model,
-        })
-
+        # Save to file
         torch.save(outputs, output_path)
 
         CONSOLE.print(f"[bold green]:white_check_mark: Semantic radiance field saved to {output_path}")

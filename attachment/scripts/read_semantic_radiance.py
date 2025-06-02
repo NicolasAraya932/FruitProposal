@@ -3,19 +3,17 @@ import viser
 import torch
 import numpy as np
 
-data = torch.load("/workspace/FruitProposal/attachment/RadianceCloud/semantic_radiance_field_20250527_191954.pt")
+data = torch.load("/workspace/FruitProposal/attachment/RadianceCloud/semantic_radiance_field_20250529_014047.pt")
 
 print(data.keys())
 
-ray_bundle = data["ray_bundle"]
-semantic_outputs = data["outputs"]
-
-origins = ray_bundle.origins
-directions = ray_bundle.directions
-labels = semantic_outputs["semantic_labels"]
-depth = semantic_outputs["depth"]
+origins    = data["origins"]
+directions = data["directions"]
+labels     = data["semantic_labels"]
+depth      = data["depth"]
 
 points = origins + directions * depth
+
 
 # Detele the 0 label points
 mask = labels != 0
@@ -44,7 +42,7 @@ ViserServer.scene.add_point_cloud(
     name="radiance_field",
     points=np.asarray(pcd.points),
     colors=np.asarray(pcd.colors),
-    point_size=0.005,
+    point_size=0.001,
 )
 
 while(True):
