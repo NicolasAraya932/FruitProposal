@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 from visualize_points import create_color_vector, VisualizePoints
 from sklearn.cluster import DBSCAN
 
+from nerfstudio.data.scene_box import OrientedBox
+
 def ritters_enclosing_sphere(points):
     """
     Compute a near-minimal bounding sphere using Ritter's algorithm (two passes).
@@ -61,7 +63,9 @@ def sphere_to_bbox(center, radius):
         [x_max, y_max, z_min],
         [x_max, y_max, z_max],
     ])
-    return corners
+
+    mask = np.array([x_min, x_max, y_min, y_max, z_min, z_max])
+    return corners, mask
 
 def bbox_edges_from_corners(corners):
     # 12 edges of a box, each as a pair of indices into the corners array
@@ -112,13 +116,22 @@ def density_filter(points: np.ndarray, r: float, k: int):
     return keep_mask, points[keep_mask]
 
 data = torch.load("/workspace/FruitProposal/attachment/RadianceCloud/semantic_radiance_field_20250529_014047.pt")
+radiance_field = torch.load("/workspace/FruitProposal/attachment/RadianceCloud/radiance_field_20250602_125748.pt")
+print(radiance_field.keys())
 
 origins    = data["origins"]
 directions = data["directions"]
 labels     = data["semantic_labels"]
 depth      = data["depth"]
 
+radiance_field_origins = radiance_field["origins"]
+radiance_field_directions = radiance_field["directions"]
+radiance_field_rgb = radiance_field["rgb"]
+radiance_field_depth = radiance_field["depth"]
+
+
 points = origins + directions * depth
+radiance_field_points = radiance_field_origins + radiance_field_directions * radiance_field_depth
 
 # Detele the 0 label points
 mask = labels != 0
@@ -191,7 +204,7 @@ for cidx, idx in clusters:
     center, radius = ritters_enclosing_sphere(cluster_points)
 
     # convert to 8 AABB corners
-    corners = sphere_to_bbox(center, radius + 1e-3)
+    corners, _ = sphere_to_bbox(center, radius + 1e-3)
 
     # Saving as points
 
@@ -200,8 +213,6 @@ for cidx, idx in clusters:
 # Concatenate all corners into a single array
 all_corners = np.vstack(all_corners)
 
-# Save corners at /workspace/FruitProposal/attachment/RadianceCloud/bounding_boxes.npy
-np.save("/workspace/FruitProposal/attachment/RadianceCloud/bounding_boxes.npy", all_corners)
 
 all_colors_corners = np.zeros((all_corners.shape[0], 3))  # black (0,0,0)
 
@@ -221,17 +232,36 @@ viser.scene.add_point_cloud(
 for cidx, idx in clusters:
     cluster_points = filtered_pts[idx]
     center, radius = ritters_enclosing_sphere(cluster_points)
-    # Add a box for this fruit cluster
-    viser.scene.add_box(
-        name=f"bbox_{cidx}",
-        color=(1.0, 0.0, 0.0),  # Red box
-        dimensions=(2*radius, 2*radius, 2*radius),
-        position=center,
-        visible=True
+
+    corners, mask = sphere_to_bbox(center, radius + 1e-3)
+
+    rf_pts = radiance_field_points  # (N_rf, 3)
+    rf_rgb = radiance_field_rgb     # same length: (N_rf, 3) or (N_rf, 4)
+
+    mask_in_box = (
+        (rf_pts[:, 0] >= mask[0]) & (rf_pts[:, 0] <= mask[1]) &
+        (rf_pts[:, 1] >= mask[2]) & (rf_pts[:, 1] <= mask[3]) &
+        (rf_pts[:, 2] >= mask[4]) & (rf_pts[:, 2] <= mask[5])
     )
+    # Keep only those radiance‐field points/rgb that lie inside this box
+    inside_pts = rf_pts[mask_in_box]
+    inside_rgb = rf_rgb[mask_in_box]
+
+    pcd_radiance = o3d.geometry.PointCloud()
+    pcd_radiance.points = o3d.utility.Vector3dVector(inside_pts.cpu().numpy())
+    pcd_radiance.colors = o3d.utility.Vector3dVector(inside_rgb.cpu().numpy())
+
+    viser.scene.add_point_cloud(
+        name=f"cluster_{cidx}_points",
+        points=np.asarray(pcd_radiance.points),
+        colors=np.asarray(pcd_radiance.colors),
+        point_size=0.001,
+    )
+
 
 fruit_pts = filtered_pts[keep_clusters_mask]
 fruit_labels = labels[mask_keep][keep_clusters_mask]
+
 
 pcd_filtered = o3d.geometry.PointCloud()
 pcd_filtered.points = o3d.utility.Vector3dVector(fruit_pts.cpu().numpy())
@@ -243,6 +273,7 @@ viser.scene.add_point_cloud(
     points=np.asarray(pcd_filtered.points),
     colors=np.asarray(pcd_filtered.colors),
     point_size=0.001,
+    visible=False
 )
 
 
