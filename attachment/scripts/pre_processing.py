@@ -5,10 +5,9 @@ import numpy as np
 import numpy as np
 from sklearn.neighbors import NearestNeighbors
 import matplotlib.pyplot as plt
-from visualize_points import create_color_vector, VisualizePoints
+from visualize_points import create_color_vector
 from sklearn.cluster import DBSCAN
 
-from nerfstudio.data.scene_box import OrientedBox
 
 def ritters_enclosing_sphere(points):
     """
@@ -217,6 +216,17 @@ all_corners = np.vstack(all_corners)
 all_colors_corners = np.zeros((all_corners.shape[0], 3))  # black (0,0,0)
 
 viser = viser.ViserServer(port=9009)
+
+pcd_radiance_field = o3d.geometry.PointCloud()
+pcd_radiance_field.points = o3d.utility.Vector3dVector(radiance_field_points.cpu().numpy())
+pcd_radiance_field.colors = o3d.utility.Vector3dVector(radiance_field_rgb.cpu().numpy())
+viser.scene.add_point_cloud(
+    name="radiance_field",
+    points=np.asarray(pcd_radiance_field.points),
+    colors=np.asarray(pcd_radiance_field.colors),
+    point_size=0.0005,
+    visible=True
+)
 
 pcd_bbox = o3d.geometry.PointCloud()
 pcd_bbox.points = o3d.utility.Vector3dVector(all_corners)
