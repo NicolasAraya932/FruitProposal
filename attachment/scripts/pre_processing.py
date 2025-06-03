@@ -155,7 +155,7 @@ plt.show()
 
 # Compute a candidate r as, for example, the 95th percentile of nearest distances
 r_candidate = np.percentile(nearest_distances, 95)
-print(f"Suggested radius r ≈ {r_candidate:.4f} (90th percentile)")
+print(f"Suggested radius r ≈ {r_candidate:.4f} (95th percentile)")
 
 # 3) For a chosen radius r, compute neighbor counts for each point
 r = r_candidate  # use the candidate radius
@@ -222,10 +222,11 @@ pcd_bbox = o3d.geometry.PointCloud()
 pcd_bbox.points = o3d.utility.Vector3dVector(all_corners)
 pcd_bbox.colors = o3d.utility.Vector3dVector(all_colors_corners)
 viser.scene.add_point_cloud(
-    name="bounding_boxes",
+    name="/bbox_vertex/bounding_boxes",
     points=np.asarray(pcd_bbox.points),
     colors=np.asarray(pcd_bbox.colors),
     point_size=0.001,
+    visible=True
 )
 
 # After you have center and radius for each cluster:
@@ -237,6 +238,14 @@ for cidx, idx in clusters:
 
     rf_pts = radiance_field_points  # (N_rf, 3)
     rf_rgb = radiance_field_rgb     # same length: (N_rf, 3) or (N_rf, 4)
+
+    viser.scene.add_box(
+        name=f"/bbox_cube/cluster_{cidx}_box",
+        position=center,
+        dimensions=np.array([radius * 2, radius * 2, radius * 2]),
+        color=np.array([1.0, 0.0, 0.0]),  # black
+        visible=True
+    )
 
     mask_in_box = (
         (rf_pts[:, 0] >= mask[0]) & (rf_pts[:, 0] <= mask[1]) &
@@ -252,10 +261,11 @@ for cidx, idx in clusters:
     pcd_radiance.colors = o3d.utility.Vector3dVector(inside_rgb.cpu().numpy())
 
     viser.scene.add_point_cloud(
-        name=f"cluster_{cidx}_points",
+        name=f"/clusters/cluster_{cidx}_points",
         points=np.asarray(pcd_radiance.points),
         colors=np.asarray(pcd_radiance.colors),
         point_size=0.001,
+        visible=True
     )
 
 
@@ -269,9 +279,20 @@ colors = create_color_vector(fruit_labels.cpu().numpy())
 pcd_filtered.colors = o3d.utility.Vector3dVector(colors)
 
 viser.scene.add_point_cloud(
-    name="filtered_points",
+    name="/filtered_points",
     points=np.asarray(pcd_filtered.points),
     colors=np.asarray(pcd_filtered.colors),
+    point_size=0.001,
+    visible=True
+)
+
+pcd_raw = o3d.geometry.PointCloud()
+pcd_raw.points = o3d.utility.Vector3dVector(points.cpu().numpy())
+pcd_raw.colors = o3d.utility.Vector3dVector(create_color_vector(labels.cpu().numpy()))
+viser.scene.add_point_cloud(
+    name="/raw_points",
+    points=np.asarray(pcd_raw.points),
+    colors=np.asarray(pcd_raw.colors),
     point_size=0.001,
     visible=False
 )
