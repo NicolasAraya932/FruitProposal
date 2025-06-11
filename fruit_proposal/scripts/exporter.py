@@ -583,7 +583,7 @@ class ExportGaussianSplat(Exporter):
     """Rotation of the oriented bounding box. Expressed as RPY Euler angles in radians"""
     obb_scale: Optional[Tuple[float, float, float]] = None
     """Scale of the oriented bounding box along each axis."""
-    ply_color_mode: Literal["sh_coeffs", "rgb"] = "sh_coeffs"
+    ply_color_mode: Literal["sh_coeffs", "rgb"] = "rgb"
     """If "rgb", export colors as red/green/blue fields. Otherwise, export colors as
     spherical harmonics coefficients."""
 
