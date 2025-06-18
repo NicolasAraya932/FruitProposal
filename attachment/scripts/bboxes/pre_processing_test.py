@@ -5,7 +5,7 @@ import numpy as np
 import numpy as np
 from sklearn.neighbors import NearestNeighbors
 import matplotlib.pyplot as plt
-from attachment.scripts.visualize_points import create_color_vector, VisualizePoints
+from attachment.scripts.bboxes.visualize_points import create_color_vector, VisualizePoints
 from sklearn.cluster import DBSCAN
 
 def ritters_enclosing_sphere(points):
