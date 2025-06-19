@@ -7,7 +7,7 @@ dependencies=[
 ]
 
 [tool.setuptools.packages.find]
-include = ["fruit_proposal*"]
+include = ["fruit_proposal*", "attachment*"]
 
 #[project.scripts]
 # ns-export-semantics = "fruit_nerf.scripts.exporter:entrypoint"
