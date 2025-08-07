@@ -77,7 +77,7 @@ if args.save_ply:
     print(f"Point cloud saved to PLY: {ply_file}")
 
 # Visualize with viser
-ViserServer = viser.ViserServer()
+ViserServer = viser.ViserServer(port=7007)
 
 # Add the point cloud to the viser server
 ViserServer.scene.add_point_cloud(
